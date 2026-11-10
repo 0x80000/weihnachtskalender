@@ -1,0 +1,775 @@
+(function () {
+  'use strict';
+
+  // ------------------------------------------------------------------ Grundlagen
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+  const r2 = v => Math.round(v * 100) / 100;
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  const PAGES = { A4: [210, 297], A3: [297, 420] };
+  const FONTS = ['Georgia', 'Segoe UI', 'Palatino Linotype', 'Gabriola', 'Segoe Script', 'Segoe Print', 'Comic Sans MS', 'Courier New', 'Impact', 'Arial'];
+  const N = 24;
+
+  const images = new Map();   // id -> { id, file, name, w, h, url (Vorschau), meta }
+  let state = defaults();
+  let view = 'photos', tool = 'move', sel = null, zoom = 1, scale = 2, showCut = true;
+  let history = [], future = [], commitTimer = null;
+
+  const stage = $('#stage'), doorsEl = $('#doors'), wrap = $('#stageWrap'), cutSvg = $('#cutSvg');
+  const doorEls = new Map();
+
+  function defaults() {
+    return {
+      format: 'A3', orient: 'portrait', bg: '#ffffff',
+      layout: { mode: 'grid', cols: 'auto', ratio: 'fill', margin: 15, gap: 6, seed: 7, auto: true },
+      cut: { hinge: 'left', inset: 0, frame: true, mirror: false, door: { mode: 'perf', cut: 4, gap: 1 }, fold: { mode: 'perf', cut: 1, gap: 2 } },
+      num: { font: 'Georgia', size: 30, color: '#ffffff', badge: true, badgeColor: '#b3261e', pos: 'c', onPhotos: false },
+      cover: { color: '#1f4d3a', img: null, outlines: true },
+      back: { font: 'Georgia', size: 14, autoFit: true, color: '#222222', align: 'center', pad: 4, mirror: 'h', rotate: true, outlines: false },
+      exp: { dpi: 'max' }, geo: false,
+      doors: Array.from({ length: N }, (_, i) => ({ id: 'd' + i, n: i + 1, x: 0, y: 0, w: 50, h: 50, img: null, z: 1, cx: .5, cy: .5, text: '', hinge: '' }))
+    };
+  }
+  function page() { const [a, b] = PAGES[state.format]; return state.orient === 'landscape' ? [b, a] : [a, b]; }
+  const getPath = p => p.split('.').reduce((o, k) => o[k], state);
+  function setPath(p, v) { const ks = p.split('.'); const last = ks.pop(); ks.reduce((o, k) => o[k], state)[last] = v; }
+  const doorById = id => state.doors.find(d => d.id === id);
+  const selDoor = () => sel && doorById(sel);
+  const fontCss = f => `"${f}", Georgia, serif`;
+
+  // ------------------------------------------------------------------ Automatische Anordnung
+  function rng(seed) {
+    let a = seed >>> 0;
+    return () => { a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  }
+  function autoRects() {
+    const [W, H] = page(), L = state.layout, m = L.margin, g = L.gap;
+    if (L.mode === 'mosaic') {
+      let rnd;
+      const split = (r, n) => {
+        if (n === 1) return [r];
+        const vertical = r.w / r.h > 0.9 + rnd() * 0.25;       // breite Flächen senkrecht teilen
+        const n1 = clamp(Math.round(n * (0.4 + rnd() * 0.2)), 1, n - 1);
+        const fr = clamp(n1 / n * (0.93 + rnd() * 0.14), 0.2, 0.8);
+        if (vertical) {
+          const w1 = (r.w - g) * fr;
+          return [...split({ x: r.x, y: r.y, w: w1, h: r.h }, n1), ...split({ x: r.x + w1 + g, y: r.y, w: r.w - g - w1, h: r.h }, n - n1)];
+        }
+        const h1 = (r.h - g) * fr;
+        return [...split({ x: r.x, y: r.y, w: r.w, h: h1 }, n1), ...split({ x: r.x, y: r.y + h1 + g, w: r.w, h: r.h - g - h1 }, n - n1)];
+      };
+      // Mehrere Versuche, die Variante mit den ausgewogensten Proportionen gewinnt
+      let best = null, bestAr = Infinity;
+      for (let t = 0; t < 40 && bestAr > 2; t++) {
+        rnd = rng(L.seed * 7919 + 13 + t * 101);
+        const rects = split({ x: m, y: m, w: W - 2 * m, h: H - 2 * m }, N);
+        const ar = Math.max(...rects.map(r => Math.max(r.w / r.h, r.h / r.w)));
+        if (ar < bestAr) { bestAr = ar; best = rects; }
+      }
+      return best;
+    }
+    const cols = L.cols === 'auto' ? (W > H ? 6 : 4) : +L.cols, rows = Math.ceil(N / cols);
+    let cw = (W - 2 * m - (cols - 1) * g) / cols, ch = (H - 2 * m - (rows - 1) * g) / rows;
+    if (L.ratio !== 'fill') {
+      const [a, b] = L.ratio.split(':').map(Number), ra = a / b;
+      if (cw / ch > ra) cw = ch * ra; else ch = cw / ra;
+    }
+    const gx = cols > 1 ? (W - 2 * m - cols * cw) / (cols - 1) : 0, gy = rows > 1 ? (H - 2 * m - rows * ch) / (rows - 1) : 0;
+    const out = [];
+    for (let i = 0; i < N; i++) out.push({ x: m + (i % cols) * (cw + gx), y: m + Math.floor(i / cols) * (ch + gy), w: cw, h: ch });
+    return out;
+  }
+  function applyAuto() {
+    autoRects().forEach((r, i) => { const d = state.doors[i]; d.x = r2(r.x); d.y = r2(r.y); d.w = r2(r.w); d.h = r2(r.h); });
+  }
+
+  // ------------------------------------------------------------------ Geometrie
+  function mirrorRect(r, m) {
+    const [W, H] = page();
+    if (m === 'h') return { x: W - r.x - r.w, y: r.y, w: r.w, h: r.h };
+    if (m === 'v') return { x: r.x, y: H - r.y - r.h, w: r.w, h: r.h };
+    return { x: r.x, y: r.y, w: r.w, h: r.h };
+  }
+  function mirrorHinge(h, m) {
+    if (m === 'h') return { left: 'right', right: 'left' }[h] || h;
+    if (m === 'v') return { top: 'bottom', bottom: 'top' }[h] || h;
+    return h;
+  }
+  const hingeOf = d => d.hinge || state.cut.hinge;
+  function imgGeom(d, im) {
+    const s = Math.max(d.w / im.w, d.h / im.h) * d.z;       // mm je Bildpixel
+    const dw = im.w * s, dh = im.h * s;
+    return { s, dw, dh, ox: (dw - d.w) * d.cx, oy: (dh - d.h) * d.cy, dpi: 25.4 / s };
+  }
+
+  // Teilt die Strecke a→b in einzelne Schnitte. endsGap: Strecke beginnt und endet mit einem Steg.
+  function dashes(a, b, cfg, endsGap) {
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (cfg.mode === 'none' || L <= 0) return [];
+    if (cfg.mode === 'solid') return [[a, b]];
+    const c = Math.max(0.2, cfg.cut), g = Math.max(0.2, cfg.gap);
+    let n, gap, off;
+    if (endsGap) { n = Math.max(1, Math.round((L - g) / (c + g))); gap = (L - n * c) / (n + 1); off = gap; }
+    else { n = Math.max(2, Math.round((L + g) / (c + g))); gap = (L - n * c) / (n - 1); off = 0; }
+    if (gap < 0.05) return [[a, b]];
+    const pt = t => [a[0] + (b[0] - a[0]) * t / L, a[1] + (b[1] - a[1]) * t / L];
+    const out = [];
+    for (let i = 0; i < n; i++) { const s = off + i * (c + gap); out.push([pt(s), pt(s + c)]); }
+    return out;
+  }
+  // Schnittlinien eines Türchens: { door: [[p,q],...], fold: [[p,q],...] } in mm.
+  function cutGeom(d, mirror) {
+    let r = mirrorRect(d, mirror), hinge = mirrorHinge(hingeOf(d), mirror);
+    const i = Math.min(state.cut.inset, r.w / 2 - 2, r.h / 2 - 2);
+    r = { x: r.x + i, y: r.y + i, w: r.w - 2 * i, h: r.h - 2 * i };
+    const c = { tl: [r.x, r.y], tr: [r.x + r.w, r.y], br: [r.x + r.w, r.y + r.h], bl: [r.x, r.y + r.h] };
+    const o = { left: ['tl', 'tr', 'br', 'bl'], right: ['tr', 'tl', 'bl', 'br'], top: ['tl', 'bl', 'br', 'tr'], bottom: ['bl', 'tl', 'tr', 'br'] }[hinge].map(k => c[k]);
+    const door = [];
+    for (let k = 0; k < 3; k++) door.push(...dashes(o[k], o[k + 1], state.cut.door, false));
+    return { door, fold: dashes(o[3], o[0], state.cut.fold, true) };
+  }
+  function pathData(segs) {
+    const f = v => +v.toFixed(3);
+    let d = '', last = null;
+    for (const [p, q] of segs) {
+      if (last && Math.abs(last[0] - p[0]) < 1e-6 && Math.abs(last[1] - p[1]) < 1e-6) d += `L${f(q[0])} ${f(q[1])}`;
+      else d += `M${f(p[0])} ${f(p[1])}L${f(q[0])} ${f(q[1])}`;
+      last = q;
+    }
+    return d;
+  }
+
+  // ------------------------------------------------------------------ Zeichnen von Nummern und Texten (Vorschau + Export)
+  function drawNum(ctx, d, w, h) {
+    const Nm = state.num, s = Nm.size / 100 * Math.min(w, h), off = s * 0.95;
+    const [x, y] = { c: [w / 2, h / 2], tl: [off, off], tr: [w - off, off], bl: [off, h - off], br: [w - off, h - off] }[Nm.pos];
+    ctx.save();
+    if (Nm.badge) { ctx.fillStyle = Nm.badgeColor; ctx.beginPath(); ctx.arc(x, y, s * 0.8, 0, Math.PI * 2); ctx.fill(); }
+    else { ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = s * 0.18; }
+    ctx.fillStyle = Nm.color; ctx.font = `600 ${s}px ${fontCss(Nm.font)}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(d.n, x, y + s * 0.05);
+    ctx.restore();
+  }
+  function wrapLines(ctx, text, maxW) {
+    const out = [];
+    for (const para of text.split('\n')) {
+      let line = '';
+      for (const word of para.split(/\s+/)) {
+        const t = line ? line + ' ' + word : word;
+        if (line && ctx.measureText(t).width > maxW) { out.push(line); line = word; } else line = t;
+      }
+      out.push(line);
+    }
+    return out;
+  }
+  function drawText(ctx, d, w, h, k) {   // k = Pixel je mm
+    const B = state.back, txt = (d.text || '').trim();
+    if (!txt) return;
+    const hg = hingeOf(d), vert = hg === 'top' || hg === 'bottom';
+    ctx.save();
+    if (B.rotate && ((B.mirror === 'h' && vert) || (B.mirror === 'v' && !vert))) { ctx.translate(w, h); ctx.rotate(Math.PI); }
+    const pad = Math.min(B.pad * k, w / 4, h / 4), mw = w - 2 * pad, mh = h - 2 * pad;
+    let fs = B.size * 0.3528 * k, lines, lh;
+    for (;;) {
+      ctx.font = `${fs}px ${fontCss(B.font)}`; lines = wrapLines(ctx, txt, mw); lh = fs * 1.3;
+      if (!B.autoFit || fs <= 1.4 * k || (lines.length * lh <= mh && lines.every(l => ctx.measureText(l).width <= mw))) break;
+      fs *= 0.95;
+    }
+    ctx.fillStyle = B.color; ctx.textBaseline = 'middle'; ctx.textAlign = B.align;
+    const x = B.align === 'left' ? pad : B.align === 'right' ? w - pad : w / 2;
+    lines.forEach((l, i) => ctx.fillText(l, x, h / 2 + (i - (lines.length - 1) / 2) * lh));
+    ctx.restore();
+  }
+
+  // ------------------------------------------------------------------ Rendering
+  function render() {
+    const [W, H] = page();
+    scale = Math.max(0.3, Math.min((wrap.clientWidth - 64) / W, (wrap.clientHeight - 64) / H)) * zoom;
+    stage.style.width = W * scale + 'px'; stage.style.height = H * scale + 'px';
+    stage.dataset.view = view; stage.dataset.tool = tool;
+    const cov = images.get(state.cover.img);
+    stage.style.backgroundColor = view === 'photos' ? state.bg : view === 'cover' ? state.cover.color : '#ffffff';
+    stage.style.backgroundImage = view === 'cover' && cov ? `url(${cov.url})` : 'none';
+
+    const dpr = window.devicePixelRatio || 1;
+    const live = new Set();
+    for (const d of state.doors) {
+      live.add(d.id);
+      let el = doorEls.get(d.id);
+      if (!el) {
+        el = document.createElement('div'); el.className = 'door'; el.dataset.id = d.id;
+        el.innerHTML = '<div class="clipper"><img alt="" draggable="false"><div class="ph"><b></b><span>Bild ablegen</span></div><canvas></canvas><div class="warn"></div></div>' +
+          '<i class="h" data-h="nw"></i><i class="h" data-h="ne"></i><i class="h" data-h="sw"></i><i class="h" data-h="se"></i>';
+        doorsEl.appendChild(el); doorEls.set(d.id, el);
+      }
+      const r = view === 'back' ? mirrorRect(d, state.back.mirror) : d;
+      const pw = r.w * scale, ph = r.h * scale;
+      Object.assign(el.style, { left: r.x * scale + 'px', top: r.y * scale + 'px', width: pw + 'px', height: ph + 'px' });
+      const im = images.get(d.img), img = $('img', el);
+      el.classList.toggle('empty', !im); el.classList.toggle('sel', d.id === sel);
+      img.hidden = !im;
+      let low = false;
+      if (im) {
+        if (img.dataset.id !== im.id) { img.src = im.url; img.dataset.id = im.id; }
+        const g = imgGeom(d, im);
+        Object.assign(img.style, { width: g.dw * scale + 'px', height: g.dh * scale + 'px', left: -g.ox * scale + 'px', top: -g.oy * scale + 'px' });
+        low = g.dpi < 150;
+        if (low) $('.warn', el).textContent = '⚠ ' + Math.round(g.dpi) + ' dpi';
+      }
+      el.classList.toggle('lowres', low);
+      $('.ph b', el).textContent = d.n;
+
+      const cv = $('canvas', el), cw = Math.max(1, Math.round(pw * dpr)), chh = Math.max(1, Math.round(ph * dpr));
+      cv.width = cw; cv.height = chh;
+      const ctx = cv.getContext('2d');
+      if (view === 'cover' || (view === 'photos' && state.num.onPhotos && im)) drawNum(ctx, d, cw, chh);
+      else if (view === 'cut' || (view === 'back' && !d.text.trim())) {
+        ctx.fillStyle = view === 'cut' ? '#8d95a8' : '#d5d9e2'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = `600 ${Math.min(cw, chh) * 0.24}px Georgia, serif`; ctx.fillText(d.n, cw / 2, chh / 2);
+      } else if (view === 'back') drawText(ctx, d, cw, chh, scale * dpr);
+    }
+    for (const [id, el] of doorEls) if (!live.has(id)) { el.remove(); doorEls.delete(id); }
+
+    // Schnittlinien
+    cutSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    let svg = '';
+    if (showCut || view === 'cut') {
+      const m = view === 'back' ? state.back.mirror : null;
+      if (state.cut.frame && view === 'cut') svg += `<path class="fr" d="M0 0H${W}V${H}H0Z"/>`;
+      let a = '', b = '';
+      for (const d of state.doors) { const g = cutGeom(d, m); a += pathData(g.door); b += pathData(g.fold); }
+      svg += `<path class="cd" d="${a}"/><path class="cf" d="${b}"/>`;
+    }
+    cutSvg.innerHTML = svg;
+
+    syncUi();
+  }
+
+  function syncUi() {
+    const [W, H] = page(), L = state.layout;
+    for (const el of $$('[data-bind]')) {
+      const v = getPath(el.dataset.bind);
+      if (el.classList.contains('seg')) { for (const b of $$('button', el)) b.classList.toggle('on', b.dataset.v === String(v)); continue; }
+      if (el.type === 'checkbox') el.checked = !!v;
+      else if (el !== document.activeElement || el.type === 'range') el.value = v;
+      const out = el.nextElementSibling;
+      if (out && out.tagName === 'OUTPUT') out.textContent = String(v).replace('.', ',') + ' ' + (out.dataset.unit || 'mm');
+    }
+    const flags = { grid: L.mode === 'grid', mosaic: L.mode === 'mosaic', doorperf: state.cut.door.mode === 'perf', foldperf: state.cut.fold.mode === 'perf' };
+    for (const el of $$('[data-if]')) el.hidden = !flags[el.dataset.if];
+    for (const b of $$('#viewSeg button')) b.classList.toggle('on', b.dataset.view === view);
+    for (const b of $$('#toolSeg button')) b.classList.toggle('on', b.dataset.tool === tool);
+    $('#zoomLabel').textContent = Math.round(zoom * 100) + ' %';
+    $('#pageInfo').textContent = `${state.format} · ${W} × ${H} mm`;
+    $('#autoInfo').textContent = L.auto ? 'Automatik aktiv – Rand und Abstand wirken sofort.' : 'Freie Anordnung – „Automatisch anordnen“ richtet neu aus.';
+    $('[data-act=undo]').disabled = history.length < 2; $('[data-act=redo]').disabled = !future.length;
+
+    const withImg = state.doors.filter(d => images.get(d.img));
+    const low = withImg.filter(d => imgGeom(d, images.get(d.img)).dpi < 150).length;
+    const texts = state.doors.filter(d => d.text.trim()).length;
+    $('#progBar').style.width = withImg.length / N * 100 + '%';
+    $('#stats').innerHTML = `<b>${withImg.length} von ${N}</b> Bildern platziert · ${texts} Texte` + (low ? `<br><span style="color:var(--accent2)">⚠ ${low} Bild${low > 1 ? 'er' : ''} unter 150 dpi – kleiner anordnen oder weniger zoomen</span>` : '');
+    $('#dropHint').hidden = withImg.length > 0;
+    $('#viewNote').textContent = {
+      photos: 'Bilderbogen – liegt hinter dem Deckblatt',
+      cover: 'Deckblatt – Vorderseite mit Nummern, wird geschnitten',
+      cut: 'Schnittdatei – rot: Türchenkante, blau: Knickkante' + (state.cut.mirror ? ' (Export gespiegelt)' : ''),
+      back: 'Rückseite des Deckblatts' + (state.back.mirror !== 'none' ? ' – gespiegelt dargestellt' : '')
+    }[view];
+    renderInspector();
+  }
+
+  function fmtDate(t) { return new Date(t).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); }
+  function metaRows(d, im) {
+    const m = im.meta, g = imgGeom(d, im), rows = [];
+    rows.push(['Aufnahme', m.date ? fmtDate(m.date) : fmtDate(im.file.lastModified) + ' (Dateidatum)']);
+    if (m.lat != null) {
+      const co = `${Math.abs(m.lat).toFixed(5)}° ${m.lat >= 0 ? 'N' : 'S'}, ${Math.abs(m.lon).toFixed(5)}° ${m.lon >= 0 ? 'O' : 'W'}`;
+      rows.push(['Ort', (m.place ? esc(m.place) + '<br>' : '') + co + (m.alt != null ? ` · ${m.alt} m` : '')]);
+    } else rows.push(['Ort', 'keine GPS-Daten']);
+    if (m.camera) rows.push(['Kamera', esc(m.camera)]);
+    if (m.lens) rows.push(['Objektiv', esc(m.lens)]);
+    const expo = [m.exposure, m.aperture, m.iso && 'ISO ' + m.iso, m.focal].filter(Boolean).join(' · ');
+    if (expo) rows.push(['Belichtung', esc(expo)]);
+    const de = v => v.toFixed(1).replace('.', ',');
+    rows.push(['Bildgröße', `${im.w} × ${im.h} px · ${de(im.w * im.h / 1e6)} MP · ${de(im.file.size / 1048576)} MB`]);
+    const q = g.dpi >= 300 ? 'good' : g.dpi < 150 ? 'bad' : '';
+    rows.push(['Druck', `<span class="${q}">${Math.round(g.dpi)} dpi</span> bei ${d.w.toFixed(0)} × ${d.h.toFixed(0)} mm`]);
+    return rows;
+  }
+  function renderInspector() {
+    const d = selDoor();
+    $('#insBody').hidden = !d; $('#insEmpty').hidden = !!d;
+    $('#insTitle').textContent = d ? 'Türchen ' + d.n : 'Kein Türchen gewählt';
+    if (!d) return;
+    for (const el of $$('[data-door]')) {
+      const k = el.dataset.door;
+      if (el !== document.activeElement || el.type === 'range') el.value = typeof d[k] === 'number' && k !== 'n' ? r2(d[k]) : d[k];
+      const out = el.nextElementSibling;
+      if (out && out.tagName === 'OUTPUT') out.textContent = d[k].toFixed(2).replace('.', ',') + ' ' + out.dataset.unit;
+    }
+    const im = images.get(d.img);
+    $('[data-door=z]').disabled = !im;
+    $('#insMeta').innerHTML = im
+      ? `<span>Datei</span><b>${esc(im.name)}</b>` + metaRows(d, im).map(([k, v]) => `<span>${k}</span><b>${v}</b>`).join('') +
+        (im.meta.lat != null ? `<span></span><b><a target="_blank" rel="noopener" href="https://www.openstreetmap.org/?mlat=${im.meta.lat.toFixed(5)}&mlon=${im.meta.lon.toFixed(5)}#map=14/${im.meta.lat.toFixed(5)}/${im.meta.lon.toFixed(5)}">Auf Karte zeigen</a></b>` : '')
+      : '';
+  }
+
+  // ------------------------------------------------------------------ Verlauf
+  function commit() {
+    clearTimeout(commitTimer); commitTimer = null;
+    const s = JSON.stringify(state);
+    if (s !== history[history.length - 1]) { history.push(s); if (history.length > 120) history.shift(); future = []; }
+    syncUi();
+  }
+  function touch() { render(); clearTimeout(commitTimer); commitTimer = setTimeout(commit, 400); }
+  function changed() { render(); commit(); }
+  function undo() { if (commitTimer) commit(); if (history.length < 2) return; future.push(history.pop()); state = JSON.parse(history[history.length - 1]); render(); }
+  function redo() { if (!future.length) return; const s = future.pop(); history.push(s); state = JSON.parse(s); render(); }
+
+  // ------------------------------------------------------------------ Meldungen
+  function toast(msg, kind) {
+    const t = document.createElement('div'); t.className = 'toast ' + (kind || ''); t.textContent = msg;
+    $('#toasts').appendChild(t); setTimeout(() => t.remove(), kind === 'err' ? 7000 : 3500);
+  }
+  async function busy(text, fn) {
+    $('#busyText').textContent = text; $('#busy').hidden = false;
+    await sleep(30);
+    try { return await fn(t => { $('#busyText').textContent = t; }); }
+    catch (e) { console.error(e); toast('Fehler: ' + e.message, 'err'); }
+    finally { $('#busy').hidden = true; }
+  }
+
+  // ------------------------------------------------------------------ Bilder laden
+  async function decode(blob) {
+    const url = URL.createObjectURL(blob), img = new Image();
+    img.src = url;
+    try { await img.decode(); } catch (e) { URL.revokeObjectURL(url); throw new Error('Format wird vom Browser nicht unterstützt'); }
+    return { img, release: () => URL.revokeObjectURL(url) };
+  }
+  const toBlob = (cv, type, q) => new Promise(r => cv.toBlob(r, type, q));
+  async function loadImage(file, id) {
+    const { img, release } = await decode(file);
+    const w = img.naturalWidth, h = img.naturalHeight, s = Math.min(1, 1800 / Math.max(w, h));
+    const cv = document.createElement('canvas'); cv.width = Math.round(w * s); cv.height = Math.round(h * s);
+    const ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high'; ctx.drawImage(img, 0, 0, cv.width, cv.height);
+    const url = URL.createObjectURL(await toBlob(cv, 'image/jpeg', 0.88));
+    release();
+    const im = { id: id || 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7), file, name: file.name, w, h, url, meta: await window.readExif(file) };
+    images.set(im.id, im);
+    geocode(im);
+    return im;
+  }
+  function assign(d, id) { d.img = id; d.z = 1; d.cx = .5; d.cy = .5; }
+  async function addFiles(files, targetId) {
+    files = [...files].filter(f => f.type.startsWith('image/') || /\.(jpe?g|png|webp|gif|bmp|avif)$/i.test(f.name));
+    if (!files.length) return;
+    let placed = 0, failed = 0, full = false;
+    await busy('Bilder werden geladen …', async say => {
+      let target = targetId && doorById(targetId);
+      for (let i = 0; i < files.length; i++) {
+        const d = target || [...state.doors].sort((a, b) => a.n - b.n).find(x => !images.get(x.img));
+        if (!d) { full = true; break; }
+        say(`Bild ${i + 1} von ${files.length} wird geladen …`);
+        try { assign(d, (await loadImage(files[i])).id); placed++; target = null; render(); }
+        catch (e) { failed++; }
+      }
+    });
+    if (placed) toast(`${placed} Bild${placed > 1 ? 'er' : ''} hinzugefügt`, 'ok');
+    if (failed) toast(`${failed} Datei${failed > 1 ? 'en' : ''} konnte${failed > 1 ? 'n' : ''} nicht gelesen werden (z. B. HEIC – bitte als JPG exportieren)`, 'err');
+    if (full) toast('Alle 24 Türchen sind belegt – weitere Bilder wurden übersprungen.');
+    changed();
+  }
+  function pickFiles(multiple, cb) {
+    const inp = $('#fileImages'); inp.multiple = multiple; inp.value = '';
+    inp.onchange = () => cb(inp.files); inp.click();
+  }
+
+  // Ortsnamen (nur nach ausdrücklicher Aktivierung)
+  const geoQueue = []; let geoBusy = false;
+  function geocode(im) {
+    if (!state.geo || im.meta.lat == null || im.meta.place || im.geoTried) return;
+    im.geoTried = true; geoQueue.push(im); pumpGeo();
+  }
+  async function pumpGeo() {
+    if (geoBusy) return; geoBusy = true;
+    while (geoQueue.length && state.geo) {
+      const im = geoQueue.shift();
+      try {
+        const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=14&accept-language=de&lat=${im.meta.lat.toFixed(5)}&lon=${im.meta.lon.toFixed(5)}`);
+        const a = (await r.json()).address || {};
+        im.meta.place = [a.village || a.town || a.city || a.municipality || a.suburb || a.county, a.state, a.country].filter(Boolean).join(', ');
+        renderInspector();
+      } catch (e) { im.geoTried = false; }
+      await sleep(1100);
+    }
+    geoBusy = false;
+  }
+
+  // ------------------------------------------------------------------ Export
+  function download(blob, name) {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 20000);
+  }
+  const fileName = (nr, what, ext) => `adventskalender-${nr}-${what}-${state.format}.${ext}`;
+  const jpegBytes = async cv => new Uint8Array(await (await toBlob(cv, 'image/jpeg', 0.95)).arrayBuffer());
+
+  // Schneidet den sichtbaren Ausschnitt (mm-Rechteck w×h, Quelle sx,sy,sw,sh in Pixeln) in Zielauflösung zu.
+  async function cropJpeg(im, sx, sy, sw, sh, wmm) {
+    const { img, release } = await decode(im.file);
+    const dpi = state.exp.dpi === 'max' ? Infinity : +state.exp.dpi;
+    let tw = Math.min(sw, wmm / 25.4 * dpi), th = tw * sh / sw;
+    const lim = Math.sqrt(80e6 / (tw * th)); if (lim < 1) { tw *= lim; th *= lim; }
+    const cv = document.createElement('canvas'); cv.width = Math.max(1, Math.round(tw)); cv.height = Math.max(1, Math.round(th));
+    const ctx = cv.getContext('2d'); ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(img, sx, sy, sw, sh, 0, 0, cv.width, cv.height);
+    release();
+    return { bytes: await jpegBytes(cv), pw: cv.width, ph: cv.height };
+  }
+  function overlayCanvas(d) {
+    const k = Math.min(600 / 25.4, 4000 / Math.max(d.w, d.h));
+    const cv = document.createElement('canvas'); cv.width = Math.round(d.w * k); cv.height = Math.round(d.h * k);
+    return { cv, ctx: cv.getContext('2d'), k };
+  }
+
+  async function buildPhotos(say) {
+    const [W, H] = page(), pdf = new window.Pdf(W, H);
+    if (state.bg.toLowerCase() !== '#ffffff') pdf.fillRect(0, 0, W, H, state.bg);
+    const list = state.doors.filter(d => images.get(d.img));
+    for (let i = 0; i < list.length; i++) {
+      const d = list[i], im = images.get(d.img), g = imgGeom(d, im);
+      say(`Bilderbogen: Bild ${i + 1} von ${list.length} …`);
+      const j = await cropJpeg(im, g.ox / g.s, g.oy / g.s, d.w / g.s, d.h / g.s, d.w);
+      pdf.jpeg(j.bytes, j.pw, j.ph, d.x, d.y, d.w, d.h);
+      if (state.num.onPhotos) { const o = overlayCanvas(d); drawNum(o.ctx, d, o.cv.width, o.cv.height); await pdf.rgba(o.cv, d.x, d.y, d.w, d.h); }
+    }
+    return pdf.build();
+  }
+  async function buildCover(say) {
+    const [W, H] = page(), pdf = new window.Pdf(W, H);
+    say('Deckblatt wird erstellt …');
+    pdf.fillRect(0, 0, W, H, state.cover.color);
+    const im = images.get(state.cover.img);
+    if (im) {
+      const s = Math.max(W / im.w, H / im.h), sw = W / s, sh = H / s;
+      const j = await cropJpeg(im, (im.w - sw) / 2, (im.h - sh) / 2, sw, sh, W);
+      pdf.jpeg(j.bytes, j.pw, j.ph, 0, 0, W, H);
+    }
+    for (const d of state.doors) {
+      if (state.cover.outlines) pdf.strokeRect(d.x, d.y, d.w, d.h, '#ffffff', 0.15);
+      const o = overlayCanvas(d); drawNum(o.ctx, d, o.cv.width, o.cv.height); await pdf.rgba(o.cv, d.x, d.y, d.w, d.h);
+    }
+    return pdf.build();
+  }
+  async function buildBack(say) {
+    const [W, H] = page(), pdf = new window.Pdf(W, H);
+    say('Rückseite wird erstellt …');
+    for (const d of state.doors) {
+      const r = mirrorRect(d, state.back.mirror);
+      if (state.back.outlines) pdf.strokeRect(r.x, r.y, r.w, r.h, '#bbbbbb', 0.15);
+      if (!d.text.trim()) continue;
+      const o = overlayCanvas(d); drawText(o.ctx, d, o.cv.width, o.cv.height, o.k); await pdf.rgba(o.cv, r.x, r.y, r.w, r.h);
+    }
+    return pdf.build();
+  }
+  function buildCut() {
+    const [W, H] = page(), m = state.cut.mirror ? 'h' : null;
+    let s = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">\n`;
+    s += `<title>Adventskalender Schnittdatei ${state.format}</title>\n`;
+    if (state.cut.frame) s += `<path id="blattrahmen" fill="none" stroke="#888888" stroke-width="0.1" d="M0 0L${W} 0L${W} ${H}L0 ${H}Z"/>\n`;
+    let a = '', b = '';
+    for (const d of [...state.doors].sort((p, q) => p.n - q.n)) {
+      const g = cutGeom(d, m), id = String(d.n).padStart(2, '0');
+      if (g.door.length) a += `<path id="tuer${id}" d="${pathData(g.door)}"/>\n`;
+      if (g.fold.length) b += `<path id="knick${id}" d="${pathData(g.fold)}"/>\n`;
+    }
+    s += `<g id="tuerchenkanten" fill="none" stroke="#ff0000" stroke-width="0.1">\n${a}</g>\n`;
+    if (b) s += `<g id="knickkanten" fill="none" stroke="#0000ff" stroke-width="0.1">\n${b}</g>\n`;
+    return new Blob([s + '</svg>\n'], { type: 'image/svg+xml' });
+  }
+  const exporters = {
+    expPhotos: async say => {
+      if (!state.doors.some(d => images.get(d.img))) return toast('Noch keine Bilder platziert.', 'err');
+      download(await buildPhotos(say), fileName(1, 'bilderbogen', 'pdf'));
+    },
+    expCut: async () => download(buildCut(), fileName(2, 'schnittdatei', 'svg')),
+    expBack: async say => download(await buildBack(say), fileName(3, 'rueckseite', 'pdf')),
+    expCover: async say => download(await buildCover(say), fileName(4, 'deckblatt', 'pdf'))
+  };
+
+  // ------------------------------------------------------------------ Projektdatei
+  const dataUrl = blob => new Promise((res, rej) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(blob); });
+  async function saveProject() {
+    await busy('Projekt wird gespeichert …', async () => {
+      const used = new Set([...state.doors.map(d => d.img), state.cover.img].filter(id => images.get(id)));
+      const parts = ['{"app":"adventskalender-studio","version":1,"state":', JSON.stringify(state), ',"images":['];
+      let first = true;
+      for (const id of used) {
+        const im = images.get(id);
+        parts.push((first ? '' : ',') + JSON.stringify({ id, name: im.name, type: im.file.type, lastModified: im.file.lastModified, place: im.meta.place || '', data: await dataUrl(im.file) }));
+        first = false;
+      }
+      parts.push(']}');
+      download(new Blob(parts, { type: 'application/json' }), 'adventskalender-projekt.json');
+    });
+  }
+  function merge(base, over) {
+    for (const k of Object.keys(over || {})) {
+      if (base[k] && typeof base[k] === 'object' && !Array.isArray(base[k]) && over[k] && typeof over[k] === 'object') merge(base[k], over[k]);
+      else base[k] = over[k];
+    }
+    return base;
+  }
+  async function openProject(file) {
+    await busy('Projekt wird geladen …', async say => {
+      const p = JSON.parse(await file.text());
+      if (p.app !== 'adventskalender-studio' || !p.state || !Array.isArray(p.state.doors)) throw new Error('Keine gültige Projektdatei');
+      for (let i = 0; i < p.images.length; i++) {
+        const r = p.images[i];
+        say(`Bild ${i + 1} von ${p.images.length} wird geladen …`);
+        const blob = await (await fetch(r.data)).blob();
+        const im = await loadImage(new File([blob], r.name, { type: r.type, lastModified: r.lastModified }), r.id);
+        if (r.place) im.meta.place = r.place;
+      }
+      state = merge(defaults(), p.state);
+      sel = null; history = []; future = [];
+      changed();
+      toast('Projekt geladen', 'ok');
+    });
+  }
+
+  // ------------------------------------------------------------------ Aktionen
+  function shuffle(a) { for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+  function redistribute(order) {
+    const list = state.doors.filter(d => images.get(d.img)).map(d => d.img);
+    order(list);
+    [...state.doors].sort((a, b) => a.n - b.n).forEach((d, i) => assign(d, list[i] || null));
+  }
+  const actions = {
+    addImages: () => pickFiles(true, f => addFiles(f)),
+    undo, redo,
+    zoomIn: () => { zoom = clamp(zoom * 1.2, 0.4, 6); render(); },
+    zoomOut: () => { zoom = clamp(zoom / 1.2, 0.4, 6); render(); },
+    zoomFit: () => { zoom = 1; render(); },
+    help: () => $('#helpDlg').showModal(),
+    saveProject,
+    openProject: () => { const i = $('#fileProject'); i.value = ''; i.onchange = () => i.files[0] && openProject(i.files[0]); i.click(); },
+    autoLayout: () => { state.layout.auto = true; applyAuto(); changed(); },
+    reroll: () => { state.layout.seed++; state.layout.auto = true; applyAuto(); changed(); },
+    shuffleNums: () => { const n = shuffle(state.doors.map(d => d.n)); state.doors.forEach((d, i) => d.n = n[i]); changed(); },
+    orderNums: () => {
+      [...state.doors].sort((a, b) => Math.abs(a.y - b.y) > Math.min(a.h, b.h) / 2 ? a.y - b.y : a.x - b.x).forEach((d, i) => d.n = i + 1);
+      changed();
+    },
+    sortByDate: () => { redistribute(l => l.sort((a, b) => { const x = images.get(a), y = images.get(b); return (x.meta.date || x.file.lastModified) - (y.meta.date || y.file.lastModified); })); changed(); toast('Bilder chronologisch auf Türchen 1–24 verteilt', 'ok'); },
+    shuffleImgs: () => { redistribute(shuffle); changed(); },
+    coverImage: () => pickFiles(false, f => f[0] && busy('Bild wird geladen …', async () => { state.cover.img = (await loadImage(f[0])).id; view = 'cover'; changed(); })),
+    coverClear: () => { state.cover.img = null; changed(); },
+    doorReplace: () => { const d = selDoor(); if (d) pickFiles(false, f => addFiles(f, d.id)); },
+    doorCenter: () => { const d = selDoor(); if (d) { d.z = 1; d.cx = d.cy = .5; changed(); } },
+    doorRemove: () => { const d = selDoor(); if (d) { d.img = null; changed(); } },
+    expAll: () => busy('Export …', async say => {
+      for (const k of ['expPhotos', 'expCut', 'expBack', 'expCover']) { await exporters[k](say); await sleep(400); }
+      toast('Export abgeschlossen', 'ok');
+    })
+  };
+  for (const k of Object.keys(exporters)) actions[k] = () => busy('Export …', exporters[k]);
+
+  document.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.act) return actions[b.dataset.act]();
+    if (b.dataset.view) { view = b.dataset.view; return render(); }
+    if (b.dataset.tool) { tool = b.dataset.tool; return render(); }
+    const seg = b.closest('.seg[data-bind]');
+    if (seg) { applyBind(seg.dataset.bind, b.dataset.v); changed(); }
+  });
+
+  function applyBind(path, v) {
+    const [pw, ph] = page();
+    setPath(path, v);
+    if (path === 'format' || path === 'orient') {
+      if (state.layout.auto) applyAuto();
+      else { const [W, H] = page(); for (const d of state.doors) { d.x = r2(d.x * W / pw); d.w = r2(d.w * W / pw); d.y = r2(d.y * H / ph); d.h = r2(d.h * H / ph); } }
+    } else if (['layout.mode', 'layout.cols', 'layout.ratio'].includes(path)) { state.layout.auto = true; applyAuto(); }
+    else if (path.startsWith('layout.')) { if (state.layout.auto) applyAuto(); }
+    else if (path === 'geo' && v) for (const im of images.values()) geocode(im);
+  }
+  document.addEventListener('input', e => {
+    const el = e.target;
+    if (el.id === 'showCut') { showCut = el.checked; return render(); }
+    if (el.dataset.bind) {
+      applyBind(el.dataset.bind, el.type === 'checkbox' ? el.checked : (el.type === 'range' || el.type === 'number') ? +el.value : el.value);
+      return touch();
+    }
+    const d = selDoor();
+    if (el.dataset.door && d) {
+      const k = el.dataset.door, [W, H] = page();
+      if (k === 'text' || k === 'hinge') d[k] = el.value;
+      else if (k === 'n') {
+        const v = clamp(Math.round(+el.value) || d.n, 1, N), other = state.doors.find(o => o.n === v);
+        if (other && other !== d) other.n = d.n;
+        d.n = v;
+      } else if (k === 'z') d.z = +el.value;
+      else if (el.value !== '' && isFinite(+el.value)) {
+        d[k] = +el.value; state.layout.auto = false;
+        d.w = clamp(d.w, 10, W); d.h = clamp(d.h, 10, H); d.x = clamp(d.x, 0, W - d.w); d.y = clamp(d.y, 0, H - d.h);
+      }
+      touch();
+    }
+  });
+  document.addEventListener('change', e => { if (e.target.dataset.bind || e.target.dataset.door) commit(); });
+
+  // ------------------------------------------------------------------ Maus-Interaktion auf der Seite
+  let drag = null;
+  const gxEl = $('#gx'), gyEl = $('#gy');
+  function snapLines(id) {
+    const [W, H] = page(), m = state.layout.margin, g = state.layout.gap;
+    const xs = [m, W - m, W / 2], ys = [m, H - m, H / 2];
+    for (const o of state.doors) if (o.id !== id) { xs.push(o.x, o.x + o.w, o.x + o.w + g, o.x - g); ys.push(o.y, o.y + o.h, o.y + o.h + g, o.y - g); }
+    return { xs, ys };
+  }
+  function nearest(v, cands, tol) { let best = null, bd = tol; for (const c of cands) { const dd = Math.abs(c - v); if (dd < bd) { bd = dd; best = c; } } return best; }
+  function showGuides(x, y) {
+    gxEl.style.display = x == null ? 'none' : 'block'; if (x != null) gxEl.style.left = x * scale + 'px';
+    gyEl.style.display = y == null ? 'none' : 'block'; if (y != null) gyEl.style.top = y * scale + 'px';
+  }
+
+  stage.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    hideTip();
+    const el = e.target.closest('.door');
+    if (!el) { sel = null; return render(); }
+    const d = doorById(el.dataset.id);
+    sel = d.id;
+    let mode = view === 'back' ? null : e.target.dataset.h ? 'resize' : (e.shiftKey && tool === 'move') ? 'crop' : tool;
+    if (mode === 'crop' && !images.get(d.img)) mode = null;
+    if (mode === 'swap' && !images.get(d.img)) mode = null;
+    if (mode) { drag = { mode, d, handle: e.target.dataset.h, sx: e.clientX, sy: e.clientY, o: { ...d }, moved: false, lines: snapLines(d.id) }; stage.setPointerCapture(e.pointerId); }
+    render();
+  });
+  stage.addEventListener('pointermove', e => {
+    if (!drag) return hover(e);
+    const dx = (e.clientX - drag.sx) / scale, dy = (e.clientY - drag.sy) / scale, d = drag.d, o = drag.o;
+    if (!drag.moved && Math.hypot(dx, dy) * scale < 3) return;
+    drag.moved = true;
+    const [W, H] = page(), tol = e.altKey ? 0 : 6 / scale, { xs, ys } = drag.lines;
+    let gx = null, gy = null;
+    if (drag.mode === 'move') {
+      let nx = o.x + dx, ny = o.y + dy;
+      const a = nearest(nx, xs, tol), b = nearest(nx + d.w, xs, tol);
+      if (a != null && (b == null || Math.abs(a - nx) <= Math.abs(b - nx - d.w))) { nx = a; gx = a; } else if (b != null) { nx = b - d.w; gx = b; }
+      const c = nearest(ny, ys, tol), f = nearest(ny + d.h, ys, tol);
+      if (c != null && (f == null || Math.abs(c - ny) <= Math.abs(f - ny - d.h))) { ny = c; gy = c; } else if (f != null) { ny = f - d.h; gy = f; }
+      d.x = r2(clamp(nx, 0, W - d.w)); d.y = r2(clamp(ny, 0, H - d.h)); state.layout.auto = false;
+    } else if (drag.mode === 'resize') {
+      let x1 = o.x, y1 = o.y, x2 = o.x + o.w, y2 = o.y + o.h; const hd = drag.handle, MIN = 12;
+      if (hd.includes('w')) { x1 = clamp(x1 + dx, 0, x2 - MIN); const s = nearest(x1, xs, tol); if (s != null && s <= x2 - MIN) { x1 = s; gx = s; } }
+      else { x2 = clamp(x2 + dx, x1 + MIN, W); const s = nearest(x2, xs, tol); if (s != null && s >= x1 + MIN) { x2 = s; gx = s; } }
+      if (hd.includes('n')) { y1 = clamp(y1 + dy, 0, y2 - MIN); const s = nearest(y1, ys, tol); if (s != null && s <= y2 - MIN) { y1 = s; gy = s; } }
+      else { y2 = clamp(y2 + dy, y1 + MIN, H); const s = nearest(y2, ys, tol); if (s != null && s >= y1 + MIN) { y2 = s; gy = s; } }
+      Object.assign(d, { x: r2(x1), y: r2(y1), w: r2(x2 - x1), h: r2(y2 - y1) }); state.layout.auto = false;
+    } else if (drag.mode === 'crop') {
+      const g = imgGeom(o, images.get(d.img));
+      if (g.dw - d.w > 0.01) d.cx = clamp(o.cx - dx / (g.dw - d.w), 0, 1);
+      if (g.dh - d.h > 0.01) d.cy = clamp(o.cy - dy / (g.dh - d.h), 0, 1);
+    } else if (drag.mode === 'swap') {
+      const t = document.elementsFromPoint(e.clientX, e.clientY).map(x => x.closest && x.closest('.door')).find(x => x && x.dataset.id !== d.id);
+      for (const x of doorEls.values()) x.classList.toggle('target', x === t);
+      drag.target = t ? t.dataset.id : null;
+      return;
+    }
+    showGuides(gx, gy);
+    render();
+  });
+  function endDrag() {
+    if (!drag) return;
+    if (drag.mode === 'swap' && drag.target) {
+      const a = drag.d, b = doorById(drag.target);
+      for (const k of ['img', 'z', 'cx', 'cy']) [a[k], b[k]] = [b[k], a[k]];
+      a.z = b.z = 1; a.cx = a.cy = b.cx = b.cy = .5;
+      sel = b.id;
+    }
+    for (const x of doorEls.values()) x.classList.remove('target');
+    const moved = drag.moved; drag = null; showGuides(null, null);
+    if (moved) changed(); else render();
+  }
+  stage.addEventListener('pointerup', endDrag);
+  stage.addEventListener('pointercancel', endDrag);
+  stage.addEventListener('dblclick', e => {
+    const el = e.target.closest('.door'); if (!el || view === 'back') return;
+    if (!images.get(doorById(el.dataset.id).img)) return pickFiles(false, f => addFiles(f, el.dataset.id));
+    if (tool !== 'crop') { tool = 'crop'; render(); toast('Ausschnitt-Modus: Bild ziehen zum Verschieben, Mausrad zoomt. Taste V wechselt zurück.'); }
+  });
+  wrap.addEventListener('wheel', e => {
+    const el = e.target.closest && e.target.closest('.door');
+    if (e.ctrlKey) { e.preventDefault(); zoom = clamp(zoom * Math.exp(-e.deltaY * 0.0015), 0.4, 6); return render(); }
+    if (el && view !== 'back' && (tool === 'crop' || el.dataset.id === sel)) {
+      const d = doorById(el.dataset.id);
+      if (!images.get(d.img)) return;
+      e.preventDefault(); sel = d.id; d.z = clamp(d.z * Math.exp(-e.deltaY * 0.0012), 1, 4); touch();
+    }
+  }, { passive: false });
+
+  // Metadaten beim Überfahren
+  const tip = $('#tooltip'); let tipId = null;
+  function hideTip() { tip.hidden = true; tipId = null; }
+  function hover(e) {
+    const el = e.target.closest('.door'), d = el && doorById(el.dataset.id), im = d && images.get(d.img);
+    if (!im || view === 'back' || view === 'cover') return hideTip();
+    if (tipId !== d.id + im.id + (im.meta.place || '')) {
+      tipId = d.id + im.id + (im.meta.place || '');
+      tip.innerHTML = `<h5>Türchen ${d.n} · ${esc(im.name)}</h5><dl>` + metaRows(d, im).map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('') + '</dl>';
+    }
+    tip.hidden = false;
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    tip.style.left = Math.min(e.clientX + 16, innerWidth - tw - 8) + 'px';
+    tip.style.top = (e.clientY + 18 + th > innerHeight ? e.clientY - th - 12 : e.clientY + 18) + 'px';
+  }
+  stage.addEventListener('pointerleave', hideTip);
+
+  // Dateien per Drag & Drop
+  wrap.addEventListener('dragover', e => { e.preventDefault(); wrap.classList.add('dragover'); });
+  wrap.addEventListener('dragleave', () => wrap.classList.remove('dragover'));
+  wrap.addEventListener('drop', e => {
+    e.preventDefault(); wrap.classList.remove('dragover');
+    const el = e.target.closest && e.target.closest('.door');
+    addFiles(e.dataTransfer.files, el && view !== 'back' ? el.dataset.id : null);
+  });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => e.preventDefault());
+
+  // Tastatur
+  document.addEventListener('keydown', e => {
+    if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) && e.target.type !== 'range' && e.target.type !== 'checkbox') return;
+    const k = e.key.toLowerCase();
+    if (e.ctrlKey && k === 'z') { e.preventDefault(); return e.shiftKey ? redo() : undo(); }
+    if (e.ctrlKey && k === 'y') { e.preventDefault(); return redo(); }
+    if (e.ctrlKey || e.metaKey) return;
+    if (k === 'v') { tool = 'move'; return render(); }
+    if (k === 'c') { tool = 'crop'; return render(); }
+    if (k === 't') { tool = 'swap'; return render(); }
+    if (k === 'escape') { sel = null; return render(); }
+    const d = selDoor(); if (!d) return;
+    if (k === 'delete' || k === 'backspace') { d.img = null; return changed(); }
+    const mv = { arrowleft: [-1, 0], arrowright: [1, 0], arrowup: [0, -1], arrowdown: [0, 1] }[k];
+    if (mv && view !== 'back') {
+      e.preventDefault();
+      const [W, H] = page(), st = e.shiftKey ? 0.1 : 1;
+      d.x = r2(clamp(d.x + mv[0] * st, 0, W - d.w)); d.y = r2(clamp(d.y + mv[1] * st, 0, H - d.h)); state.layout.auto = false; touch();
+    }
+  });
+
+  window.addEventListener('beforeunload', e => { if (state.doors.some(d => d.img)) { e.preventDefault(); e.returnValue = ''; } });
+  new ResizeObserver(() => render()).observe(wrap);
+
+  // ------------------------------------------------------------------ Start
+  for (const s of $$('.fontsel')) s.innerHTML = FONTS.map(f => `<option style="font-family:'${f}'">${f}</option>`).join('');
+  applyAuto();
+  changed();
+  if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
+  window.kalender = { addFiles, build: { photos: buildPhotos, cover: buildCover, back: buildBack, cut: buildCut }, get state() { return state; } };
+})();

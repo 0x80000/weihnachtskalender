@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adventskalender Studio</title>
+<meta name="theme-color" content="#151821">
+<meta name="description" content="Bilder-Türchen-Adventskalender gestalten: Bilderbogen, Schnittdatei für Brother ScanNCut, Rückseite und Deckblatt.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand"><span class="logo">24</span><div><b>Adventskalender Studio</b><small>Bilder-Türchen-Kalender gestalten</small></div></div>
+
+  <div class="seg" id="viewSeg" title="Ansicht">
+    <button data-view="photos">Bilderbogen</button>
+    <button data-view="cover">Deckblatt</button>
+    <button data-view="cut">Schnitt</button>
+    <button data-view="back">Rückseite</button>
+  </div>
+
+  <div class="spacer"></div>
+
+  <div class="seg" id="toolSeg" title="Werkzeug">
+    <button data-tool="move" title="Türchen verschieben und skalieren (V)">Anordnen</button>
+    <button data-tool="crop" title="Bildausschnitt verschieben, Mausrad zoomt (C)">Ausschnitt</button>
+    <button data-tool="swap" title="Bild auf ein anderes Türchen ziehen (T)">Tauschen</button>
+  </div>
+
+  <div class="group">
+    <button class="icon" data-act="undo" title="Rückgängig (Strg+Z)">↶</button>
+    <button class="icon" data-act="redo" title="Wiederholen (Strg+Y)">↷</button>
+  </div>
+  <div class="group">
+    <button class="icon" data-act="zoomOut" title="Verkleinern">−</button>
+    <button class="ghost" data-act="zoomFit" id="zoomLabel" title="Einpassen">100 %</button>
+    <button class="icon" data-act="zoomIn" title="Vergrößern">+</button>
+  </div>
+  <label class="check compact" title="Schnittlinien in allen Ansichten einblenden"><input type="checkbox" id="showCut" checked><span>Schnittlinien</span></label>
+  <div class="group">
+    <button class="ghost" data-act="openProject" title="Projektdatei laden">Öffnen</button>
+    <button class="ghost" data-act="saveProject" title="Projekt inkl. Bildern speichern">Speichern</button>
+    <button class="icon" data-act="help" title="Hilfe">?</button>
+  </div>
+  <button class="primary" data-act="addImages">＋ Bilder</button>
+</header>
+
+<main class="layout">
+  <aside class="panel left">
+
+    <details open>
+      <summary>Format</summary>
+      <div class="body">
+        <div class="row"><label>Papier</label>
+          <div class="seg small" data-bind="format"><button data-v="A4">A4</button><button data-v="A3">A3</button></div></div>
+        <div class="row"><label>Ausrichtung</label>
+          <div class="seg small" data-bind="orient"><button data-v="portrait">Hoch</button><button data-v="landscape">Quer</button></div></div>
+        <div class="row"><label>Hintergrund</label><input type="color" data-bind="bg"></div>
+        <p class="hint" id="pageInfo"></p>
+      </div>
+    </details>
+
+    <details open>
+      <summary>Anordnung</summary>
+      <div class="body">
+        <div class="row"><label>Modus</label>
+          <div class="seg small" data-bind="layout.mode"><button data-v="grid">Raster</button><button data-v="mosaic">Mosaik</button></div></div>
+        <div class="row" data-if="grid"><label>Spalten</label>
+          <select data-bind="layout.cols"><option value="auto">Automatisch</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option></select></div>
+        <div class="row" data-if="grid"><label>Seitenverhältnis</label>
+          <select data-bind="layout.ratio"><option value="fill">Fläche füllen</option><option value="1:1">1:1 Quadrat</option><option value="4:3">4:3 quer</option><option value="3:2">3:2 quer</option><option value="3:4">3:4 hoch</option><option value="2:3">2:3 hoch</option></select></div>
+        <div class="row"><label>Rand</label><input type="range" min="5" max="40" step="1" data-bind="layout.margin"><output></output></div>
+        <div class="row"><label>Abstand</label><input type="range" min="0" max="25" step="0.5" data-bind="layout.gap"><output></output></div>
+        <div class="btns">
+          <button class="accent wide" data-act="autoLayout">Automatisch anordnen</button>
+          <button data-act="reroll" data-if="mosaic">Neu würfeln</button>
+        </div>
+        <p class="hint" id="autoInfo"></p>
+        <div class="btns">
+          <button data-act="shuffleNums">Zahlen mischen</button>
+          <button data-act="orderNums">Zahlen ordnen</button>
+          <button data-act="sortByDate" title="Bilder chronologisch auf Türchen 1–24 verteilen">Bilder nach Datum</button>
+          <button data-act="shuffleImgs">Bilder mischen</button>
+        </div>
+      </div>
+    </details>
+
+    <details open>
+      <summary>Schnitt &amp; Perforation</summary>
+      <div class="body">
+        <div class="row"><label>Scharnier</label>
+          <select data-bind="cut.hinge"><option value="left">links</option><option value="right">rechts</option><option value="top">oben</option><option value="bottom">unten</option></select></div>
+
+        <h4><i class="dot red"></i>Türchenkante (3 Seiten)</h4>
+        <div class="row"><label>Art</label>
+          <select data-bind="cut.door.mode"><option value="perf">perforiert</option><option value="solid">durchgehend</option></select></div>
+        <div class="row" data-if="doorperf"><label>Schnittlänge</label><input type="range" min="0.5" max="20" step="0.1" data-bind="cut.door.cut"><output></output></div>
+        <div class="row" data-if="doorperf"><label>Steglänge</label><input type="range" min="0.3" max="5" step="0.1" data-bind="cut.door.gap"><output></output></div>
+
+        <h4><i class="dot blue"></i>Knickkante (Scharnier)</h4>
+        <div class="row"><label>Art</label>
+          <select data-bind="cut.fold.mode"><option value="perf">perforiert</option><option value="none">nicht schneiden</option><option value="solid">durchgehend</option></select></div>
+        <div class="row" data-if="foldperf"><label>Schnittlänge</label><input type="range" min="0.3" max="10" step="0.1" data-bind="cut.fold.cut"><output></output></div>
+        <div class="row" data-if="foldperf"><label>Steglänge</label><input type="range" min="0.5" max="10" step="0.1" data-bind="cut.fold.gap"><output></output></div>
+
+        <div class="row"><label title="Schnitt nach innen versetzen, damit das Bild die Öffnung sicher füllt">Versatz innen</label><input type="range" min="0" max="5" step="0.1" data-bind="cut.inset"><output></output></div>
+        <label class="check"><input type="checkbox" data-bind="cut.frame"><span>Blattrahmen als Ausrichthilfe</span></label>
+        <label class="check"><input type="checkbox" data-bind="cut.mirror"><span>Gespiegelt (Schnitt von der Rückseite)</span></label>
+      </div>
+    </details>
+
+    <details>
+      <summary>Türchen-Nummern</summary>
+      <div class="body">
+        <div class="row"><label>Schrift</label><select data-bind="num.font" class="fontsel"></select></div>
+        <div class="row"><label>Größe</label><input type="range" min="8" max="70" step="1" data-bind="num.size"><output data-unit="%"></output></div>
+        <div class="row"><label>Position</label>
+          <select data-bind="num.pos"><option value="c">Mitte</option><option value="tl">oben links</option><option value="tr">oben rechts</option><option value="bl">unten links</option><option value="br">unten rechts</option></select></div>
+        <div class="row"><label>Farbe</label><input type="color" data-bind="num.color"></div>
+        <label class="check"><input type="checkbox" data-bind="num.badge"><span>Kreis hinter der Zahl</span></label>
+        <div class="row"><label>Kreisfarbe</label><input type="color" data-bind="num.badgeColor"></div>
+        <label class="check"><input type="checkbox" data-bind="num.onPhotos"><span>Auch auf den Bilderbogen drucken</span></label>
+      </div>
+    </details>
+
+    <details>
+      <summary>Deckblatt</summary>
+      <div class="body">
+        <div class="row"><label>Farbe</label><input type="color" data-bind="cover.color"></div>
+        <div class="btns">
+          <button data-act="coverImage">Hintergrundbild wählen</button>
+          <button data-act="coverClear">Entfernen</button>
+        </div>
+        <label class="check"><input type="checkbox" data-bind="cover.outlines"><span>Feine Türchen-Umrisse drucken</span></label>
+      </div>
+    </details>
+
+    <details>
+      <summary>Rückseiten-Text</summary>
+      <div class="body">
+        <div class="row"><label>Schrift</label><select data-bind="back.font" class="fontsel"></select></div>
+        <div class="row"><label>Größe</label><input type="range" min="6" max="48" step="1" data-bind="back.size"><output data-unit="pt"></output></div>
+        <label class="check"><input type="checkbox" data-bind="back.autoFit"><span>Automatisch verkleinern, wenn zu lang</span></label>
+        <div class="row"><label>Farbe</label><input type="color" data-bind="back.color"></div>
+        <div class="row"><label>Ausrichtung</label>
+          <div class="seg small" data-bind="back.align"><button data-v="left">Links</button><button data-v="center">Mitte</button><button data-v="right">Rechts</button></div></div>
+        <div class="row"><label>Innenabstand</label><input type="range" min="1" max="15" step="0.5" data-bind="back.pad"><output></output></div>
+        <div class="row"><label>Wenden über</label>
+          <select data-bind="back.mirror"><option value="h">lange Kante (Hochformat)</option><option value="v">kurze Kante</option><option value="none">nicht spiegeln</option></select></div>
+        <label class="check"><input type="checkbox" data-bind="back.rotate"><span>Text passend zur Klapprichtung drehen</span></label>
+        <label class="check"><input type="checkbox" data-bind="back.outlines"><span>Feine Umrisse drucken</span></label>
+        <p class="hint">Den Text je Türchen rechts im Inspektor eingeben.</p>
+      </div>
+    </details>
+  </aside>
+
+  <section class="canvas" id="stageWrap">
+    <div class="stage" id="stage">
+      <div id="doors"></div>
+      <svg id="cutSvg" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="guide v" id="gx"></div>
+      <div class="guide h" id="gy"></div>
+    </div>
+    <div class="dropzone" id="dropHint"><b>Bilder hier ablegen</b><span>oder oben „Bilder hinzufügen“ – JPG, PNG, WebP</span></div>
+    <div class="viewnote" id="viewNote"></div>
+  </section>
+
+  <aside class="panel right">
+    <div class="card" id="inspector">
+      <div class="cardhead"><b id="insTitle">Kein Türchen gewählt</b></div>
+      <div id="insEmpty" class="hint">Ein Türchen anklicken, um Position, Bildausschnitt und Rückseitentext zu bearbeiten.</div>
+      <div id="insBody" hidden>
+        <div class="grid2">
+          <label>Nummer<input type="number" min="1" max="24" data-door="n"></label>
+          <label>Scharnier<select data-door="hinge"><option value="">Standard</option><option value="left">links</option><option value="right">rechts</option><option value="top">oben</option><option value="bottom">unten</option></select></label>
+          <label>X (mm)<input type="number" step="0.5" data-door="x"></label>
+          <label>Y (mm)<input type="number" step="0.5" data-door="y"></label>
+          <label>Breite<input type="number" step="0.5" min="10" data-door="w"></label>
+          <label>Höhe<input type="number" step="0.5" min="10" data-door="h"></label>
+        </div>
+        <div class="row"><label>Bild-Zoom</label><input type="range" min="1" max="4" step="0.01" data-door="z"><output data-unit="×"></output></div>
+        <p class="hint">Bild im Türchen verschieben: <kbd>Umschalt</kbd> + Ziehen, oder Doppelklick aufs Bild für den Ausschnitt-Modus. Mausrad zoomt.</p>
+        <div class="btns">
+          <button data-act="doorReplace">Bild wählen</button>
+          <button data-act="doorCenter">Zentrieren</button>
+          <button data-act="doorRemove">Bild entfernen</button>
+        </div>
+        <label class="stack">Text auf der Rückseite
+          <textarea rows="4" data-door="text" placeholder="z. B. Gutschein, Gedicht, Erinnerung …"></textarea></label>
+        <div class="meta" id="insMeta"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="cardhead"><b>Status</b></div>
+      <div class="progress"><i id="progBar"></i></div>
+      <div class="hint" id="stats"></div>
+      <label class="check"><input type="checkbox" data-bind="geo"><span>Ortsnamen online nachschlagen (OpenStreetMap)</span></label>
+      <p class="hint">Sendet nur die GPS-Koordinaten der Bilder an nominatim.openstreetmap.org.</p>
+    </div>
+
+    <div class="card">
+      <div class="cardhead"><b>Export</b></div>
+      <div class="row"><label>Bildqualität</label>
+        <select data-bind="exp.dpi"><option value="max">Maximal (Originalauflösung)</option><option value="600">600 dpi</option><option value="300">300 dpi</option></select></div>
+      <div class="exports">
+        <button data-act="expPhotos"><b>1 · Bilderbogen</b><small>PDF, 24 Bilder</small></button>
+        <button data-act="expCut"><b>2 · Schnittdatei</b><small>SVG für ScanNCut</small></button>
+        <button data-act="expBack"><b>3 · Rückseite</b><small>PDF mit Texten</small></button>
+        <button data-act="expCover"><b>4 · Deckblatt</b><small>PDF mit Nummern</small></button>
+      </div>
+      <button class="primary wide" data-act="expAll">Alle Dateien exportieren</button>
+    </div>
+  </aside>
+</main>
+
+<div id="tooltip" class="tooltip" hidden></div>
+<div id="toasts"></div>
+<div id="busy" hidden><div class="busybox"><div class="spinner"></div><span id="busyText">Bitte warten …</span></div></div>
+
+<dialog id="helpDlg">
+  <h2>So entsteht der Kalender</h2>
+  <ol>
+    <li><b>Bilder laden</b> – bis zu 24 Fotos hineinziehen. Mauszeiger auf ein Bild zeigt Aufnahmedatum, Ort, Kamera und die Druckauflösung.</li>
+    <li><b>Anordnen</b> – „Automatisch anordnen“ (Raster oder Mosaik) oder Türchen frei verschieben und an den Ecken skalieren. Kanten rasten ein, <kbd>Alt</kbd> schaltet das Einrasten ab.</li>
+    <li><b>Ausschnitt</b> – im Werkzeug „Ausschnitt“ (oder Doppelklick aufs Bild) das Bild im Türchen verschieben, Mausrad zoomt. Im Werkzeug „Anordnen“ geht dasselbe mit <kbd>Umschalt</kbd> + Ziehen; das Mausrad zoomt das gewählte Türchen.</li>
+    <li><b>Perforation</b> – Türchenkante und Knickkante getrennt einstellen: Schnittlänge ist der geschnittene Teil, Steglänge das stehenbleibende Papier.</li>
+    <li><b>Exportieren</b> – Bilderbogen und Deckblatt drucken, die Rückseite auf die Rückseite des Deckblatts drucken (beidseitig, über die gewählte Kante wenden).</li>
+  </ol>
+  <h3>Brother ScanNCut</h3>
+  <ul>
+    <li>Die SVG-Datei in <b>CanvasWorkspace</b> importieren oder per USB-Stick direkt an der Maschine laden (SDX-Serie, CM-Serie mit aktueller Firmware).</li>
+    <li>Jeder Perforationsschnitt ist eine echte, einzelne Linie – die Maschine braucht keine Strichlinien-Funktion.</li>
+    <li>Nach dem Import die Größe prüfen: Der Blattrahmen muss exakt dem Papierformat entsprechen. Blatt auf der Matte einscannen, Rahmen deckungsgleich ausrichten, dann den Rahmen vor dem Schneiden löschen.</li>
+    <li>A4 passt auf die 12″×12″-Matte, für A3 wird die 12″×24″-Matte benötigt.</li>
+    <li>Erst an einem Probeblatt testen: Reißt das Türchen schwer auf, Steglänge verkleinern; fällt es heraus, vergrößern.</li>
+  </ul>
+  <h3>Tastatur</h3>
+  <p><kbd>V</kbd> Anordnen · <kbd>C</kbd> Ausschnitt · <kbd>T</kbd> Tauschen · <kbd>Pfeile</kbd> 1 mm verschieben (<kbd>Umschalt</kbd> 0,1 mm) · <kbd>Entf</kbd> Bild entfernen · <kbd>Strg+Z</kbd>/<kbd>Strg+Y</kbd> · <kbd>Strg+Mausrad</kbd> Zoom</p>
+  <form method="dialog"><button class="primary">Schließen</button></form>
+</dialog>
+
+<input type="file" id="fileImages" accept="image/*" multiple hidden>
+<input type="file" id="fileProject" accept=".json,application/json" hidden>
+
+<script src="exif.js"></script>
+<script src="pdf.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
