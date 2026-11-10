@@ -164,7 +164,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px;
 .stage[data-view=photos] .door.empty .ph { display: flex; }
 .stage[data-view=photos] .door.lowres .warn { display: block; }
 .stage[data-view=cover] .door img, .stage[data-view=back] .door img { display: none; }
-.stage[data-view=cover] .door { box-shadow: inset 0 0 0 1px rgba(255,255,255,.35); }
+.stage[data-view=cover].cover-outlines .door { box-shadow: inset 0 0 0 1px rgba(255,255,255,.35); }
 .stage[data-view=cut] .door img { opacity: .16; }
 .stage[data-view=cut] .door, .stage[data-view=back] .door { box-shadow: inset 0 0 0 1px #d9dce4; }
 .stage[data-tool=move] .door { cursor: move; }

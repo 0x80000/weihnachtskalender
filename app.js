@@ -419,6 +419,7 @@
     scale = Math.max(0.3, Math.min((wrap.clientWidth - 64) / W, (wrap.clientHeight - 64) / H)) * zoom;
     stage.style.width = W * scale + 'px'; stage.style.height = H * scale + 'px';
     stage.dataset.view = view; stage.dataset.tool = tool;
+    stage.classList.toggle('cover-outlines', state.cover.outlines);
     const cov = images.get(state.cover.img);
     stage.style.backgroundColor = view === 'photos' ? state.bg : view === 'cover' ? state.cover.color : '#ffffff';
     stage.style.backgroundImage = view === 'cover' && cov ? `url(${cov.url})` : 'none';
@@ -473,7 +474,7 @@
     cutSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     let svg = '';
     if (sheet) svg = numPaths(sheet).map(q => `<path class="nm" d="${q.d}"/>`).join('');
-    else if (showCut || view === 'cut') {
+    else if ((showCut && (view !== 'cover' || state.cover.outlines)) || view === 'cut') {
       const m = view === 'back' ? state.back.mirror : null;
       if (state.cut.frame && view === 'cut') svg += `<path class="fr" d="M0 0H${W}V${H}H0Z"/>`;
       let a = '', b = '';
