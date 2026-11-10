@@ -26,11 +26,11 @@
       format: 'A3', orient: 'portrait', bg: '#ffffff',
       layout: { mode: 'grid', cols: 'auto', ratio: 'fill', margin: 15, gap: 6, seed: 7, auto: true },
       cut: { hinge: 'left', inset: 1.5, radius: 3, roundHinge: true, frame: true, mirror: false, door: { mode: 'perf', cut: 4, gap: 1 }, fold: { mode: 'perf', cut: 1, gap: 2 } },
-      num: { font: 'Georgia', size: 30, color: '#ffffff', badge: true, badgeColor: '#b3261e', pos: 'c', onPhotos: false },
+      num: { font: 'Georgia', mode: 'rel', size: 30, mm: 14, print: true, sheetW: 200, sheetGap: 4, color: '#ffffff', badge: true, badgeColor: '#b3261e', pos: 'c', onPhotos: false },
       cover: { color: '#1f4d3a', img: null, outlines: true },
       back: { font: 'Georgia', size: 14, autoFit: true, color: '#222222', align: 'center', pad: 4, mirror: 'h', rotate: true, outlines: false },
       exp: { dpi: 'max' }, geo: false,
-      doors: Array.from({ length: N }, (_, i) => ({ id: 'd' + i, n: i + 1, x: 0, y: 0, w: 50, h: 50, img: null, z: 1, cx: .5, cy: .5, text: '', hinge: '' }))
+      doors: Array.from({ length: N }, (_, i) => ({ id: 'd' + i, n: i + 1, x: 0, y: 0, w: 50, h: 50, img: null, z: 1, cx: .5, cy: .5, text: '', hinge: '', ns: 1 }))
     };
   }
   function page() { const [a, b] = PAGES[state.format]; return state.orient === 'landscape' ? [b, a] : [a, b]; }
@@ -201,8 +201,119 @@
   }
 
   // ------------------------------------------------------------------ Zeichnen von Nummern und Texten (Vorschau + Export)
+  // ------------------------------------------------------------------ Zahlen als Schnittkonturen
+  // Zeichnet den Text groß auf eine Leinwand und zieht die Umrisse als geschlossene Linienzüge nach.
+  // So funktioniert jede installierte Schrift, ohne Schriftdateien lesen zu müssen.
+  const glyphCache = new Map();
+  function glyph(str, font) {
+    const key = font + '|' + str;
+    if (glyphCache.has(key)) return glyphCache.get(key);
+    const E = 480, pad = 24, cv = document.createElement('canvas');
+    let ctx = cv.getContext('2d');
+    const fnt = `600 ${E}px ${fontCss(font)}`;
+    ctx.font = fnt;
+    const mt = ctx.measureText(str);
+    const L = Math.ceil(mt.actualBoundingBoxLeft) + pad, A = Math.ceil(mt.actualBoundingBoxAscent) + pad;
+    cv.width = L + Math.ceil(mt.actualBoundingBoxRight) + pad; cv.height = A + Math.ceil(mt.actualBoundingBoxDescent) + pad;
+    ctx = cv.getContext('2d', { willReadFrequently: true });
+    ctx.font = fnt; ctx.fillStyle = '#000'; ctx.fillText(str, L, A);
+    const W = cv.width, H = cv.height, px = ctx.getImageData(0, 0, W, H).data, T = 127.5;
+    const v = (x, y) => px[(y * W + x) * 4 + 3];
+
+    // Marching Squares: Schnittpunkte der Kontur mit den Rasterkanten, je Zelle verbunden
+    const adj = new Map(), pts = new Map();
+    const link = (a, b) => { for (const [m, n] of [[a, b], [b, a]]) { if (!adj.has(m)) adj.set(m, []); adj.get(m).push(n); } };
+    const t = (a, b) => (T - a) / (b - a);
+    for (let y = 0; y < H - 1; y++) {
+      for (let x = 0; x < W - 1; x++) {
+        const a = v(x, y), b = v(x + 1, y), c = v(x + 1, y + 1), d = v(x, y + 1);
+        const idx = (a > T ? 1 : 0) | (b > T ? 2 : 0) | (c > T ? 4 : 0) | (d > T ? 8 : 0);
+        if (idx === 0 || idx === 15) continue;
+        const top = (y * W + x) * 2, left = top + 1, bottom = ((y + 1) * W + x) * 2, right = (y * W + x + 1) * 2 + 1;
+        if ((a > T) !== (b > T)) pts.set(top, [x + t(a, b), y]);
+        if ((a > T) !== (d > T)) pts.set(left, [x, y + t(a, d)]);
+        if ((d > T) !== (c > T)) pts.set(bottom, [x + t(d, c), y + 1]);
+        if ((b > T) !== (c > T)) pts.set(right, [x + 1, y + t(b, c)]);
+        switch (idx) {
+          case 1: case 14: link(left, top); break;
+          case 2: case 13: link(top, right); break;
+          case 3: case 12: link(left, right); break;
+          case 4: case 11: link(right, bottom); break;
+          case 6: case 9: link(top, bottom); break;
+          case 7: case 8: link(left, bottom); break;
+          case 5: link(left, top); link(right, bottom); break;
+          case 10: link(top, right); link(left, bottom); break;
+        }
+      }
+    }
+    // Kanten zu geschlossenen Schleifen verketten
+    const seen = new Set(), loops = [];
+    for (const start of adj.keys()) {
+      if (seen.has(start)) continue;
+      const loop = [];
+      for (let cur = start; cur !== undefined; cur = adj.get(cur).find(n => !seen.has(n))) { seen.add(cur); loop.push(pts.get(cur)); }
+      if (loop.length >= 8) loops.push(loop);
+    }
+    // Vereinfachen (Douglas-Peucker), damit der Plotter wenige, saubere Stützpunkte bekommt
+    const tol = 0.3;
+    const dp = line => {
+      const keep = new Uint8Array(line.length); keep[0] = keep[line.length - 1] = 1;
+      const stack = [[0, line.length - 1]];
+      while (stack.length) {
+        const [i, j] = stack.pop(), [ax, ay] = line[i], [bx, by] = line[j], dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy) || 1;
+        let far = -1, fd = tol;
+        for (let k = i + 1; k < j; k++) { const dd = Math.abs((line[k][0] - ax) * dy - (line[k][1] - ay) * dx) / len; if (dd > fd) { fd = dd; far = k; } }
+        if (far > 0) { keep[far] = 1; stack.push([i, far], [far, j]); }
+      }
+      return line.filter((_, k) => keep[k]);
+    };
+    const simple = loops.map(loop => {
+      let m = 0, md = 0;
+      loop.forEach((q, k) => { const dd = Math.hypot(q[0] - loop[0][0], q[1] - loop[0][1]); if (dd > md) { md = dd; m = k; } });
+      return [...dp(loop.slice(0, m + 1)), ...dp([...loop.slice(m), loop[0]]).slice(1, -1)].map(q => [(q[0] - L) / E, (q[1] - A) / E]);
+    });
+    const all = simple.flat(), xs = all.map(q => q[0]), ys = all.map(q => q[1]);
+    const g = all.length
+      ? { loops: simple, x0: Math.min(...xs), w: Math.max(...xs) - Math.min(...xs), asc: -Math.min(...ys), desc: Math.max(0, Math.max(...ys)) }
+      : { loops: [], x0: 0, w: 0.5, asc: 0.7, desc: 0 };
+    glyphCache.set(key, g);
+    return g;
+  }
+  // Schriftgröße (Geviert) der Zahl eines Türchens in mm – gilt für Druck und Schnitt gleichermaßen.
+  function numEm(d) {
+    const Nm = state.num;
+    const base = Nm.mode === 'abs' ? Nm.mm / glyph('8', Nm.font).asc : Nm.size / 100 * Math.min(d.w, d.h);
+    return base * (d.ns || 1);
+  }
+  const byPos = (a, b) => Math.abs(a.y - b.y) > Math.min(a.h, b.h) / 2 ? a.y - b.y : a.x - b.x;
+  // Zahlenbogen: Zahlen zeilenweise in der Reihenfolge der Türchen auf dem Kalender, auf gemeinsamer Grundlinie.
+  function numSheet() {
+    const Nm = state.num, W = Nm.sheetW, m = 5, gap = Nm.sheetGap;
+    const rows = [[]]; let x = m;
+    for (const d of [...state.doors].sort(byPos)) {
+      const g = glyph(String(d.n), Nm.font), em = numEm(d), w = g.w * em;
+      if (rows[rows.length - 1].length && x + w > W - m) { rows.push([]); x = m; }
+      rows[rows.length - 1].push({ d, g, em, x, w });
+      x += w + gap;
+    }
+    let y = m;
+    for (const row of rows) {
+      const asc = Math.max(...row.map(i => i.g.asc * i.em)), desc = Math.max(...row.map(i => i.g.desc * i.em));
+      for (const i of row) i.base = y + asc;
+      y += asc + desc + gap;
+    }
+    return { W, H: y - gap + m, items: rows.flat() };
+  }
+  function numPaths(sheet) {
+    const f = v => +v.toFixed(3);
+    return sheet.items.map(i => ({
+      n: i.d.n,
+      d: i.g.loops.map(loop => 'M' + loop.map(q => `${f(i.x + (q[0] - i.g.x0) * i.em)} ${f(i.base + q[1] * i.em)}`).join('L') + 'Z').join('')
+    }));
+  }
+
   function drawNum(ctx, d, w, h) {
-    const Nm = state.num, s = Nm.size / 100 * Math.min(w, h), off = s * 0.95;
+    const Nm = state.num, s = numEm(d) * w / d.w, off = s * 0.95;
     const [x, y] = { c: [w / 2, h / 2], tl: [off, off], tr: [w - off, off], bl: [off, h - off], br: [w - off, h - off] }[Nm.pos];
     ctx.save();
     if (Nm.badge) { ctx.fillStyle = Nm.badgeColor; ctx.beginPath(); ctx.arc(x, y, s * 0.8, 0, Math.PI * 2); ctx.fill(); }
@@ -244,7 +355,9 @@
 
   // ------------------------------------------------------------------ Rendering
   function render() {
-    const [W, H] = page();
+    const sheet = view === 'nums' ? numSheet() : null;
+    const [W, H] = sheet ? [sheet.W, sheet.H] : page();
+    doorsEl.hidden = !!sheet;
     scale = Math.max(0.3, Math.min((wrap.clientWidth - 64) / W, (wrap.clientHeight - 64) / H)) * zoom;
     stage.style.width = W * scale + 'px'; stage.style.height = H * scale + 'px';
     stage.dataset.view = view; stage.dataset.tool = tool;
@@ -283,7 +396,7 @@
       const cv = $('canvas', el), cw = Math.max(1, Math.round(pw * dpr)), chh = Math.max(1, Math.round(ph * dpr));
       cv.width = cw; cv.height = chh;
       const ctx = cv.getContext('2d');
-      if (view === 'cover' || (view === 'photos' && state.num.onPhotos && im)) drawNum(ctx, d, cw, chh);
+      if ((view === 'cover' && state.num.print) || (view === 'photos' && state.num.onPhotos && im)) drawNum(ctx, d, cw, chh);
       else if (view === 'cut' || (view === 'back' && !d.text.trim())) {
         ctx.fillStyle = view === 'cut' ? '#8d95a8' : '#d5d9e2'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
         ctx.font = `600 ${Math.min(cw, chh) * 0.24}px Georgia, serif`; ctx.fillText(d.n, cw / 2, chh / 2);
@@ -294,7 +407,8 @@
     // Schnittlinien
     cutSvg.setAttribute('viewBox', `0 0 ${W} ${H}`);
     let svg = '';
-    if (showCut || view === 'cut') {
+    if (sheet) svg = numPaths(sheet).map(q => `<path class="nm" d="${q.d}"/>`).join('');
+    else if (showCut || view === 'cut') {
       const m = view === 'back' ? state.back.mirror : null;
       if (state.cut.frame && view === 'cut') svg += `<path class="fr" d="M0 0H${W}V${H}H0Z"/>`;
       let a = '', b = '';
@@ -316,7 +430,7 @@
       const out = el.nextElementSibling;
       if (out && out.tagName === 'OUTPUT') out.textContent = String(v).replace('.', ',') + ' ' + (out.dataset.unit || 'mm');
     }
-    const flags = { grid: L.mode === 'grid', mosaic: L.mode === 'mosaic', doorperf: state.cut.door.mode === 'perf', foldperf: state.cut.fold.mode === 'perf' };
+    const flags = { grid: L.mode === 'grid', mosaic: L.mode === 'mosaic', doorperf: state.cut.door.mode === 'perf', foldperf: state.cut.fold.mode === 'perf', numrel: state.num.mode === 'rel', numabs: state.num.mode === 'abs' };
     for (const el of $$('[data-if]')) el.hidden = !flags[el.dataset.if];
     for (const b of $$('#viewSeg button')) b.classList.toggle('on', b.dataset.view === view);
     for (const b of $$('#toolSeg button')) b.classList.toggle('on', b.dataset.tool === tool);
@@ -335,6 +449,7 @@
       photos: 'Bilderbogen – liegt hinter dem Deckblatt',
       cover: 'Deckblatt – Vorderseite mit Nummern, wird geschnitten',
       cut: 'Schnittdatei – rot: Türchenkante, blau: Knickkante' + (state.cut.mirror ? ' (Export gespiegelt)' : ''),
+      nums: view === 'nums' ? (sh => `Zahlen zum Plotten – ${Math.round(sh.W)} × ${Math.ceil(sh.H)} mm Material, Reihenfolge wie auf dem Kalender (zeilenweise von links oben)`)(numSheet()) : '',
       back: 'Rückseite des Deckblatts' + (state.back.mirror !== 'none' ? ' – gespiegelt dargestellt' : '')
     }[view];
     renderInspector();
@@ -519,6 +634,7 @@
     }
     for (const d of state.doors) {
       if (state.cover.outlines) pdf.strokePoly(outlinePoints(d, null), '#ffffff', 0.15);
+      if (!state.num.print) continue;
       const o = overlayCanvas(d); drawNum(o.ctx, d, o.cv.width, o.cv.height); await pdf.rgba(o.cv, d.x, d.y, d.w, d.h);
     }
     return pdf.build();
@@ -549,6 +665,13 @@
     if (b) s += `<g id="knickkanten" fill="none" stroke="#0000ff" stroke-width="0.1">\n${b}</g>\n`;
     return new Blob([s + '</svg>\n'], { type: 'image/svg+xml' });
   }
+  function buildNums() {
+    const sh = numSheet(), W = +sh.W.toFixed(2), H = +sh.H.toFixed(2);
+    let s = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">\n`;
+    s += `<title>Adventskalender Zahlen</title>\n<g id="zahlen" fill="none" stroke="#000000" stroke-width="0.1">\n`;
+    numPaths(sh).forEach((q, i) => { s += `<path id="pos${String(i + 1).padStart(2, '0')}-zahl${q.n}" d="${q.d}"/>\n`; });
+    return new Blob([s + '</g>\n</svg>\n'], { type: 'image/svg+xml' });
+  }
   const exporters = {
     expPhotos: async say => {
       if (!state.doors.some(d => images.get(d.img))) return toast('Noch keine Bilder platziert.', 'err');
@@ -556,7 +679,8 @@
     },
     expCut: async () => download(buildCut(), fileName(2, 'schnittdatei', 'svg')),
     expBack: async say => download(await buildBack(say), fileName(3, 'rueckseite', 'pdf')),
-    expCover: async say => download(await buildCover(say), fileName(4, 'deckblatt', 'pdf'))
+    expCover: async say => download(await buildCover(say), fileName(4, 'deckblatt', 'pdf')),
+    expNums: async () => download(buildNums(), fileName(5, 'zahlen', 'svg'))
   };
 
   // ------------------------------------------------------------------ Projektdatei
@@ -594,6 +718,7 @@
         if (r.place) im.meta.place = r.place;
       }
       state = merge(defaults(), p.state);
+      for (const d of state.doors) if (!d.ns) d.ns = 1;
       sel = null; history = []; future = [];
       changed();
       toast('Projekt geladen', 'ok');
@@ -620,7 +745,7 @@
     reroll: () => { state.layout.seed++; state.layout.auto = true; applyAuto(); changed(); },
     shuffleNums: () => { const n = shuffle(state.doors.map(d => d.n)); state.doors.forEach((d, i) => d.n = n[i]); changed(); },
     orderNums: () => {
-      [...state.doors].sort((a, b) => Math.abs(a.y - b.y) > Math.min(a.h, b.h) / 2 ? a.y - b.y : a.x - b.x).forEach((d, i) => d.n = i + 1);
+      [...state.doors].sort(byPos).forEach((d, i) => d.n = i + 1);
       changed();
     },
     sortByDate: () => { redistribute(l => l.sort((a, b) => { const x = images.get(a), y = images.get(b); return (x.meta.date || x.file.lastModified) - (y.meta.date || y.file.lastModified); })); changed(); toast('Bilder chronologisch auf Türchen 1–24 verteilt', 'ok'); },
@@ -631,7 +756,7 @@
     doorCenter: () => { const d = selDoor(); if (d) { d.z = 1; d.cx = d.cy = .5; changed(); } },
     doorRemove: () => { const d = selDoor(); if (d) { d.img = null; changed(); } },
     expAll: () => busy('Export …', async say => {
-      for (const k of ['expPhotos', 'expCut', 'expBack', 'expCover']) { await exporters[k](say); await sleep(400); }
+      for (const k of ['expPhotos', 'expCut', 'expBack', 'expCover', 'expNums']) { await exporters[k](say); await sleep(400); }
       toast('Export abgeschlossen', 'ok');
     })
   };
@@ -671,7 +796,7 @@
         const v = clamp(Math.round(+el.value) || d.n, 1, N), other = state.doors.find(o => o.n === v);
         if (other && other !== d) other.n = d.n;
         d.n = v;
-      } else if (k === 'z') d.z = +el.value;
+      } else if (k === 'z' || k === 'ns') d[k] = +el.value;
       else if (el.value !== '' && isFinite(+el.value)) {
         d[k] = +el.value; state.layout.auto = false;
         d.w = clamp(d.w, 10, W); d.h = clamp(d.h, 10, H); d.x = clamp(d.x, 0, W - d.w); d.y = clamp(d.y, 0, H - d.h);
@@ -829,5 +954,5 @@
   applyAuto();
   changed();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
-  window.kalender = { addFiles, build: { photos: buildPhotos, cover: buildCover, back: buildBack, cut: buildCut }, get state() { return state; } };
+  window.kalender = { addFiles, build: { photos: buildPhotos, cover: buildCover, back: buildBack, cut: buildCut, nums: buildNums }, get state() { return state; } };
 })();
