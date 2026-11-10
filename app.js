@@ -28,9 +28,9 @@
       cut: { hinge: 'left', inset: 1.5, radius: 3, roundHinge: true, frame: true, mirror: false, door: { mode: 'perf', cut: 4, gap: 1 }, fold: { mode: 'perf', cut: 1, gap: 2 } },
       num: { font: 'Georgia', mode: 'rel', size: 30, mm: 14, print: true, sheetW: 200, sheetGap: 4, color: '#ffffff', badge: true, badgeColor: '#b3261e', pos: 'c', onPhotos: false },
       cover: { color: '#1f4d3a', img: null, outlines: true },
-      back: { font: 'Georgia', size: 14, autoFit: true, color: '#222222', align: 'center', pad: 4, mirror: 'h', rotate: true, outlines: false },
+      back: { font: 'Georgia', size: 14, bold: false, autoFit: true, uniform: true, color: '#222222', align: 'center', pad: 4, mirror: 'h', rotate: true, outlines: false },
       exp: { dpi: 'max' }, geo: false,
-      doors: Array.from({ length: N }, (_, i) => ({ id: 'd' + i, n: i + 1, x: 0, y: 0, w: 50, h: 50, img: null, z: 1, cx: .5, cy: .5, text: '', hinge: '', ns: 1 }))
+      doors: Array.from({ length: N }, (_, i) => ({ id: 'd' + i, n: i + 1, x: 0, y: 0, w: 50, h: 50, img: null, z: 1, cx: .5, cy: .5, text: '', hinge: '', ns: 1, ts: 1 }))
     };
   }
   function page() { const [a, b] = PAGES[state.format]; return state.orient === 'landscape' ? [b, a] : [a, b]; }
@@ -334,19 +334,44 @@
     }
     return out;
   }
+  // Schriftgröße (mm) des Rückseitentexts je Türchen. Mit „automatisch verkleinern“ wird verkleinert, bis der Text passt –
+  // bei einheitlicher Größe richten sich alle Türchen nach dem engsten, damit das Schriftbild gleichmäßig bleibt.
+  let sizeMemo = { key: '', map: null };
+  const measCtx = document.createElement('canvas').getContext('2d');
+  const textFont = px => `${state.back.bold ? '700 ' : ''}${px}px ${fontCss(state.back.font)}`;
+  function textSizes() {
+    const B = state.back, key = JSON.stringify([B, state.doors.map(d => [d.text, d.w, d.h, d.ts])]);
+    if (sizeMemo.key === key) return sizeMemo.map;
+    const K = 10, base = B.size * 0.3528, fit = new Map();
+    for (const d of state.doors) {
+      const txt = d.text.trim();
+      if (!txt) continue;
+      let mm = base;
+      if (B.autoFit) {
+        const pad = Math.min(B.pad, d.w / 4, d.h / 4), mw = (d.w - 2 * pad) * K, mh = (d.h - 2 * pad) * K;
+        for (; mm > 1.4; mm *= 0.95) {
+          measCtx.font = textFont(mm * K);
+          const lines = wrapLines(measCtx, txt, mw);
+          if (lines.length * mm * K * 1.3 <= mh && lines.every(l => measCtx.measureText(l).width <= mw)) break;
+        }
+      }
+      fit.set(d.id, mm);
+    }
+    const common = Math.min(base, ...fit.values()), map = new Map();
+    for (const d of state.doors) if (fit.has(d.id)) map.set(d.id, (B.autoFit && B.uniform ? common : fit.get(d.id)) * (d.ts || 1));
+    sizeMemo = { key, map };
+    return map;
+  }
   function drawText(ctx, d, w, h, k) {   // k = Pixel je mm
     const B = state.back, txt = (d.text || '').trim();
     if (!txt) return;
     const hg = hingeOf(d), vert = hg === 'top' || hg === 'bottom';
     ctx.save();
     if (B.rotate && ((B.mirror === 'h' && vert) || (B.mirror === 'v' && !vert))) { ctx.translate(w, h); ctx.rotate(Math.PI); }
-    const pad = Math.min(B.pad * k, w / 4, h / 4), mw = w - 2 * pad, mh = h - 2 * pad;
-    let fs = B.size * 0.3528 * k, lines, lh;
-    for (;;) {
-      ctx.font = `${fs}px ${fontCss(B.font)}`; lines = wrapLines(ctx, txt, mw); lh = fs * 1.3;
-      if (!B.autoFit || fs <= 1.4 * k || (lines.length * lh <= mh && lines.every(l => ctx.measureText(l).width <= mw))) break;
-      fs *= 0.95;
-    }
+    const pad = Math.min(B.pad, d.w / 4, d.h / 4) * k, mw = w - 2 * pad;
+    const fs = (textSizes().get(d.id) || B.size * 0.3528) * k, lh = fs * 1.3;
+    ctx.font = textFont(fs);
+    const lines = wrapLines(ctx, txt, mw);
     ctx.fillStyle = B.color; ctx.textBaseline = 'middle'; ctx.textAlign = B.align;
     const x = B.align === 'left' ? pad : B.align === 'right' ? w - pad : w / 2;
     lines.forEach((l, i) => ctx.fillText(l, x, h / 2 + (i - (lines.length - 1) / 2) * lh));
@@ -616,8 +641,11 @@
     for (let i = 0; i < list.length; i++) {
       const d = list[i], im = images.get(d.img), g = imgGeom(d, im);
       say(`Bilderbogen: Bild ${i + 1} von ${list.length} …`);
-      const j = await cropJpeg(im, g.ox / g.s, g.oy / g.s, d.w / g.s, d.h / g.s, d.w);
-      pdf.jpeg(j.bytes, j.pw, j.ph, d.x, d.y, d.w, d.h);
+      // Sichtbarer Teil des Bildes im Türchen (bei Zoom unter 100 % füllt das Bild das Türchen nicht aus)
+      const vx = Math.max(0, -g.ox), vy = Math.max(0, -g.oy);
+      const vw = Math.min(d.w, g.dw - g.ox) - vx, vh = Math.min(d.h, g.dh - g.oy) - vy;
+      const j = await cropJpeg(im, (vx + g.ox) / g.s, (vy + g.oy) / g.s, vw / g.s, vh / g.s, vw);
+      pdf.jpeg(j.bytes, j.pw, j.ph, d.x + vx, d.y + vy, vw, vh);
       if (state.num.onPhotos) { const o = overlayCanvas(d); drawNum(o.ctx, d, o.cv.width, o.cv.height); await pdf.rgba(o.cv, d.x, d.y, d.w, d.h); }
     }
     return pdf.build();
@@ -718,7 +746,7 @@
         if (r.place) im.meta.place = r.place;
       }
       state = merge(defaults(), p.state);
-      for (const d of state.doors) if (!d.ns) d.ns = 1;
+      for (const d of state.doors) { if (!d.ns) d.ns = 1; if (!d.ts) d.ts = 1; }
       sel = null; history = []; future = [];
       changed();
       toast('Projekt geladen', 'ok');
@@ -796,7 +824,7 @@
         const v = clamp(Math.round(+el.value) || d.n, 1, N), other = state.doors.find(o => o.n === v);
         if (other && other !== d) other.n = d.n;
         d.n = v;
-      } else if (k === 'z' || k === 'ns') d[k] = +el.value;
+      } else if (k === 'z' || k === 'ns' || k === 'ts') d[k] = +el.value;
       else if (el.value !== '' && isFinite(+el.value)) {
         d[k] = +el.value; state.layout.auto = false;
         d.w = clamp(d.w, 10, W); d.h = clamp(d.h, 10, H); d.x = clamp(d.x, 0, W - d.w); d.y = clamp(d.y, 0, H - d.h);
@@ -857,8 +885,8 @@
       Object.assign(d, { x: r2(x1), y: r2(y1), w: r2(x2 - x1), h: r2(y2 - y1) }); state.layout.auto = false;
     } else if (drag.mode === 'crop') {
       const g = imgGeom(o, images.get(d.img));
-      if (g.dw - d.w > 0.01) d.cx = clamp(o.cx - dx / (g.dw - d.w), 0, 1);
-      if (g.dh - d.h > 0.01) d.cy = clamp(o.cy - dy / (g.dh - d.h), 0, 1);
+      if (Math.abs(g.dw - d.w) > 0.01) d.cx = clamp(o.cx - dx / (g.dw - d.w), 0, 1);
+      if (Math.abs(g.dh - d.h) > 0.01) d.cy = clamp(o.cy - dy / (g.dh - d.h), 0, 1);
     } else if (drag.mode === 'swap') {
       const t = document.elementsFromPoint(e.clientX, e.clientY).map(x => x.closest && x.closest('.door')).find(x => x && x.dataset.id !== d.id);
       for (const x of doorEls.values()) x.classList.toggle('target', x === t);
@@ -893,7 +921,7 @@
     if (el && view !== 'back' && (tool === 'crop' || el.dataset.id === sel)) {
       const d = doorById(el.dataset.id);
       if (!images.get(d.img)) return;
-      e.preventDefault(); sel = d.id; d.z = clamp(d.z * Math.exp(-e.deltaY * 0.0012), 1, 4); touch();
+      e.preventDefault(); sel = d.id; d.z = clamp(d.z * Math.exp(-e.deltaY * 0.0012), 0.3, 4); touch();
     }
   }, { passive: false });
 
