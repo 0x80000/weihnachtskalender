@@ -28,6 +28,7 @@ Web-App zum Gestalten eines Bilder-Türchen-Adventskalenders: 24 Fotos auf A3 od
 | 3 · Rückseite | PDF | Texte für die Rückseite der Türchen |
 | 4 · Deckblatt | PDF | Vorderseite mit Nummern, Farbe oder Hintergrundbild |
 | 5 · Zahlen | SVG | Türchen-Nummern als Schnittkonturen zum Plotten, platzsparend in Klebe-Reihenfolge |
+| 6 · Textkärtchen | SVG | Schnittlinien für die Rückseitentexte, etwas kleiner als die Türchen, zum Ausschneiden und Einkleben |
 
 ## Hinweise zur Brother ScanNCut
 

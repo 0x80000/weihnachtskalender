@@ -169,7 +169,13 @@
           <select data-bind="back.mirror"><option value="h">lange Kante (Hochformat)</option><option value="v">kurze Kante</option><option value="none">nicht spiegeln</option></select></div>
         <label class="check"><input type="checkbox" data-bind="back.rotate"><span>Text passend zur Klapprichtung drehen</span></label>
         <label class="check"><input type="checkbox" data-bind="back.outlines"><span>Feine Umrisse drucken</span></label>
-        <p class="hint">Den Text je Türchen rechts im Inspektor eingeben.</p>
+        <h4><i class="dot green"></i>Textkärtchen plotten</h4>
+        <div class="row"><label>Art</label>
+          <select data-bind="back.label.mode"><option value="solid">ausschneiden (durchgehend)</option><option value="perf">perforiert</option></select></div>
+        <div class="row" data-if="labelperf"><label>Schnittlänge</label><input type="range" min="0.5" max="20" step="0.1" data-bind="back.label.cut"><output></output></div>
+        <div class="row" data-if="labelperf"><label>Steglänge</label><input type="range" min="0.3" max="5" step="0.1" data-bind="back.label.gap"><output></output></div>
+        <div class="row"><label title="So viel kleiner als die Türchen-Öffnung, rundum">Kleiner um</label><input type="range" min="0" max="10" step="0.5" data-bind="back.label.inset"><output></output></div>
+        <p class="hint">Grüne Linie in der Ansicht „Rückseite“. Die Kärtchen sind rundum um diesen Betrag kleiner als die Türchen-Öffnung, damit sie sich einkleben lassen. Den Text je Türchen rechts im Inspektor eingeben.</p>
       </div>
     </details>
   </aside>
@@ -231,7 +237,8 @@
         <button data-act="expCut"><b>2 · Schnittdatei</b><small>SVG für ScanNCut</small></button>
         <button data-act="expBack"><b>3 · Rückseite</b><small>PDF mit Texten</small></button>
         <button data-act="expCover"><b>4 · Deckblatt</b><small>PDF mit Nummern</small></button>
-        <button data-act="expNums" class="span2"><b>5 · Zahlen</b><small>SVG zum Plotten, in Klebe-Reihenfolge</small></button>
+        <button data-act="expNums"><b>5 · Zahlen</b><small>SVG zum Plotten</small></button>
+        <button data-act="expLabels"><b>6 · Textkärtchen</b><small>SVG, Schnitt der Texte</small></button>
       </div>
       <button class="primary wide" data-act="expAll">Alle Dateien exportieren</button>
     </div>

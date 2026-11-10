@@ -28,7 +28,7 @@
       cut: { hinge: 'left', inset: 1.5, radius: 3, roundHinge: true, frame: true, mirror: false, door: { mode: 'perf', cut: 4, gap: 1 }, fold: { mode: 'perf', cut: 1, gap: 2 } },
       num: { font: 'Georgia', mode: 'rel', size: 30, mm: 14, print: true, sheetW: 200, sheetGap: 4, color: '#ffffff', badge: true, badgeColor: '#b3261e', pos: 'c', onPhotos: false },
       cover: { color: '#1f4d3a', img: null, outlines: true },
-      back: { font: 'Georgia', size: 14, bold: false, autoFit: true, uniform: true, color: '#222222', align: 'center', pad: 4, mirror: 'h', rotate: true, outlines: false },
+      back: { font: 'Georgia', size: 14, bold: false, autoFit: true, uniform: true, color: '#222222', align: 'center', pad: 4, mirror: 'h', rotate: true, outlines: false, label: { inset: 2, mode: 'solid', cut: 4, gap: 1 } },
       exp: { dpi: 'max' }, geo: false,
       doors: Array.from({ length: N }, (_, i) => ({ id: 'd' + i, n: i + 1, x: 0, y: 0, w: 50, h: 50, img: null, z: 1, cx: .5, cy: .5, text: '', hinge: '', ns: 1, ts: 1 }))
     };
@@ -188,6 +188,25 @@
     }
     return pts;
   }
+  // Textkärtchen: geschlossener Umriss mit vier runden Ecken, um back.label.inset kleiner als die Türchen-Öffnung.
+  function labelPieces(d, mirror) {
+    const c = cutRect(d, mirror), i = Math.max(0, Math.min(state.back.label.inset, c.w / 2 - 3, c.h / 2 - 3));
+    const r = { x: c.x + i, y: c.y + i, w: c.w - 2 * i, h: c.h - 2 * i };
+    const rad = Math.max(0, Math.min(state.cut.radius - i, r.w / 2, r.h / 2));
+    const o = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]], dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+    const pieces = []; let cur, first;
+    for (let k = 0; k < 4; k++) {
+      const din = dirs[(k + 3) % 4], dout = dirs[k];
+      const a = [o[k][0] - din[0] * rad, o[k][1] - din[1] * rad], b = [o[k][0] + dout[0] * rad, o[k][1] + dout[1] * rad];
+      if (k > 0) pieces.push(line(cur, a)); else first = a;
+      if (rad > 0) pieces.push(arcPiece(a, b, [a[0] + dout[0] * rad, a[1] + dout[1] * rad], rad));
+      cur = b;
+    }
+    pieces.push(line(cur, first));
+    return dashRun(pieces.filter(pc => pc.len > 1e-6), state.back.label, false);
+  }
+  // Abstand des Textes vom Türchenrand: Innenabstand ab der Kante des Textkärtchens.
+  const textPad = d => Math.min(state.back.pad + state.cut.inset + state.back.label.inset, d.w / 4, d.h / 4);
   function pathData(pieces) {
     const f = v => +v.toFixed(3);
     let d = '', last = null;
@@ -340,7 +359,7 @@
   const measCtx = document.createElement('canvas').getContext('2d');
   const textFont = px => `${state.back.bold ? '700 ' : ''}${px}px ${fontCss(state.back.font)}`;
   function textSizes() {
-    const B = state.back, key = JSON.stringify([B, state.doors.map(d => [d.text, d.w, d.h, d.ts])]);
+    const B = state.back, key = JSON.stringify([B, state.cut.inset, state.doors.map(d => [d.text, d.w, d.h, d.ts])]);
     if (sizeMemo.key === key) return sizeMemo.map;
     const K = 10, base = B.size * 0.3528, fit = new Map();
     for (const d of state.doors) {
@@ -348,7 +367,7 @@
       if (!txt) continue;
       let mm = base;
       if (B.autoFit) {
-        const pad = Math.min(B.pad, d.w / 4, d.h / 4), mw = (d.w - 2 * pad) * K, mh = (d.h - 2 * pad) * K;
+        const pad = textPad(d), mw = (d.w - 2 * pad) * K, mh = (d.h - 2 * pad) * K;
         for (; mm > 1.4; mm *= 0.95) {
           measCtx.font = textFont(mm * K);
           const lines = wrapLines(measCtx, txt, mw);
@@ -368,7 +387,7 @@
     const hg = hingeOf(d), vert = hg === 'top' || hg === 'bottom';
     ctx.save();
     if (B.rotate && ((B.mirror === 'h' && vert) || (B.mirror === 'v' && !vert))) { ctx.translate(w, h); ctx.rotate(Math.PI); }
-    const pad = Math.min(B.pad, d.w / 4, d.h / 4) * k, mw = w - 2 * pad;
+    const pad = textPad(d) * k, mw = w - 2 * pad;
     const fs = (textSizes().get(d.id) || B.size * 0.3528) * k, lh = fs * 1.3;
     ctx.font = textFont(fs);
     const lines = wrapLines(ctx, txt, mw);
@@ -390,7 +409,7 @@
     stage.style.backgroundColor = view === 'photos' ? state.bg : view === 'cover' ? state.cover.color : '#ffffff';
     stage.style.backgroundImage = view === 'cover' && cov ? `url(${cov.url})` : 'none';
 
-    const dpr = window.devicePixelRatio || 1;
+    const dpr = window.devicePixelRatio || 1, origin = stage.getBoundingClientRect();
     const live = new Set();
     for (const d of state.doors) {
       live.add(d.id);
@@ -420,6 +439,8 @@
 
       const cv = $('canvas', el), cw = Math.max(1, Math.round(pw * dpr)), chh = Math.max(1, Math.round(ph * dpr));
       cv.width = cw; cv.height = chh;
+      const ax = origin.left + r.x * scale, ay = origin.top + r.y * scale;
+      Object.assign(cv.style, { left: Math.round(ax * dpr) / dpr - ax + 'px', top: Math.round(ay * dpr) / dpr - ay + 'px', width: cw / dpr + 'px', height: chh / dpr + 'px' });
       const ctx = cv.getContext('2d');
       if ((view === 'cover' && state.num.print) || (view === 'photos' && state.num.onPhotos && im)) drawNum(ctx, d, cw, chh);
       else if (view === 'cut' || (view === 'back' && !d.text.trim())) {
@@ -439,6 +460,7 @@
       let a = '', b = '';
       for (const d of state.doors) { const g = cutGeom(d, m); a += pathData(g.door); b += pathData(g.fold); }
       svg += `<path class="cd" d="${a}"/><path class="cf" d="${b}"/>`;
+      if (view === 'back') svg += `<path class="cl" d="${state.doors.filter(d => d.text.trim()).map(d => pathData(labelPieces(d, m))).join('')}"/>`;
     }
     cutSvg.innerHTML = svg;
 
@@ -455,7 +477,7 @@
       const out = el.nextElementSibling;
       if (out && out.tagName === 'OUTPUT') out.textContent = String(v).replace('.', ',') + ' ' + (out.dataset.unit || 'mm');
     }
-    const flags = { grid: L.mode === 'grid', mosaic: L.mode === 'mosaic', doorperf: state.cut.door.mode === 'perf', foldperf: state.cut.fold.mode === 'perf', numrel: state.num.mode === 'rel', numabs: state.num.mode === 'abs' };
+    const flags = { grid: L.mode === 'grid', mosaic: L.mode === 'mosaic', doorperf: state.cut.door.mode === 'perf', foldperf: state.cut.fold.mode === 'perf', numrel: state.num.mode === 'rel', numabs: state.num.mode === 'abs', labelperf: state.back.label.mode === 'perf' };
     for (const el of $$('[data-if]')) el.hidden = !flags[el.dataset.if];
     for (const b of $$('#viewSeg button')) b.classList.toggle('on', b.dataset.view === view);
     for (const b of $$('#toolSeg button')) b.classList.toggle('on', b.dataset.tool === tool);
@@ -700,6 +722,15 @@
     numPaths(sh).forEach((q, i) => { s += `<path id="pos${String(i + 1).padStart(2, '0')}-zahl${q.n}" d="${q.d}"/>\n`; });
     return new Blob([s + '</g>\n</svg>\n'], { type: 'image/svg+xml' });
   }
+  function buildLabels() {
+    const [W, H] = page(), m = state.back.mirror === 'none' ? null : state.back.mirror;
+    let s = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">\n`;
+    s += `<title>Adventskalender Textkärtchen ${state.format}</title>\n`;
+    if (state.cut.frame) s += `<path id="blattrahmen" fill="none" stroke="#888888" stroke-width="0.1" d="M0 0L${W} 0L${W} ${H}L0 ${H}Z"/>\n`;
+    s += `<g id="textkaertchen" fill="none" stroke="#00aa00" stroke-width="0.1">\n`;
+    for (const d of [...state.doors].sort((a, b) => a.n - b.n)) if (d.text.trim()) s += `<path id="text${String(d.n).padStart(2, '0')}" d="${pathData(labelPieces(d, m))}"/>\n`;
+    return new Blob([s + '</g>\n</svg>\n'], { type: 'image/svg+xml' });
+  }
   const exporters = {
     expPhotos: async say => {
       if (!state.doors.some(d => images.get(d.img))) return toast('Noch keine Bilder platziert.', 'err');
@@ -708,7 +739,11 @@
     expCut: async () => download(buildCut(), fileName(2, 'schnittdatei', 'svg')),
     expBack: async say => download(await buildBack(say), fileName(3, 'rueckseite', 'pdf')),
     expCover: async say => download(await buildCover(say), fileName(4, 'deckblatt', 'pdf')),
-    expNums: async () => download(buildNums(), fileName(5, 'zahlen', 'svg'))
+    expNums: async () => download(buildNums(), fileName(5, 'zahlen', 'svg')),
+    expLabels: async () => {
+      if (!state.doors.some(d => d.text.trim())) return toast('Noch kein Rückseitentext eingegeben.', 'err');
+      download(buildLabels(), fileName(6, 'textkaertchen', 'svg'));
+    }
   };
 
   // ------------------------------------------------------------------ Projektdatei
@@ -784,7 +819,7 @@
     doorCenter: () => { const d = selDoor(); if (d) { d.z = 1; d.cx = d.cy = .5; changed(); } },
     doorRemove: () => { const d = selDoor(); if (d) { d.img = null; changed(); } },
     expAll: () => busy('Export …', async say => {
-      for (const k of ['expPhotos', 'expCut', 'expBack', 'expCover', 'expNums']) { await exporters[k](say); await sleep(400); }
+      for (const k of ['expPhotos', 'expCut', 'expBack', 'expCover', 'expNums', 'expLabels']) { await exporters[k](say); await sleep(400); }
       toast('Export abgeschlossen', 'ok');
     })
   };
@@ -982,5 +1017,5 @@
   applyAuto();
   changed();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
-  window.kalender = { addFiles, build: { photos: buildPhotos, cover: buildCover, back: buildBack, cut: buildCut, nums: buildNums }, get state() { return state; } };
+  window.kalender = { addFiles, build: { photos: buildPhotos, cover: buildCover, back: buildBack, cut: buildCut, nums: buildNums, labels: buildLabels }, get state() { return state; } };
 })();
