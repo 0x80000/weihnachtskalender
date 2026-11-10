@@ -25,7 +25,7 @@
     return {
       format: 'A3', orient: 'portrait', bg: '#ffffff',
       layout: { mode: 'grid', cols: 'auto', ratio: 'fill', margin: 15, gap: 6, seed: 7, auto: true },
-      cut: { hinge: 'left', inset: 0, frame: true, mirror: false, door: { mode: 'perf', cut: 4, gap: 1 }, fold: { mode: 'perf', cut: 1, gap: 2 } },
+      cut: { hinge: 'left', inset: 1.5, radius: 3, roundHinge: true, frame: true, mirror: false, door: { mode: 'perf', cut: 4, gap: 1 }, fold: { mode: 'perf', cut: 1, gap: 2 } },
       num: { font: 'Georgia', size: 30, color: '#ffffff', badge: true, badgeColor: '#b3261e', pos: 'c', onPhotos: false },
       cover: { color: '#1f4d3a', img: null, outlines: true },
       back: { font: 'Georgia', size: 14, autoFit: true, color: '#222222', align: 'center', pad: 4, mirror: 'h', rotate: true, outlines: false },
@@ -105,38 +105,96 @@
     return { s, dw, dh, ox: (dw - d.w) * d.cx, oy: (dh - d.h) * d.cy, dpi: 25.4 / s };
   }
 
-  // Teilt die Strecke a→b in einzelne Schnitte. endsGap: Strecke beginnt und endet mit einem Steg.
-  function dashes(a, b, cfg, endsGap) {
-    const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  // Ein Wegstück ist eine Strecke oder ein Kreisbogen: { p, q, len, arc?: { c, r, a0, a1 } }.
+  const line = (p, q) => ({ p, q, len: Math.hypot(q[0] - p[0], q[1] - p[1]) });
+  function arcPiece(p, q, c, r) {
+    const a0 = Math.atan2(p[1] - c[1], p[0] - c[0]);
+    let da = Math.atan2(q[1] - c[1], q[0] - c[0]) - a0;
+    if (da > Math.PI) da -= 2 * Math.PI; else if (da < -Math.PI) da += 2 * Math.PI;
+    return { p, q, len: Math.abs(da) * r, arc: { c, r, a0, a1: a0 + da } };
+  }
+  function clipPiece(pc, s, e) {
+    if (s <= 1e-9 && e >= pc.len - 1e-9) return pc;
+    if (!pc.arc) {
+      const at = t => [pc.p[0] + (pc.q[0] - pc.p[0]) * t / pc.len, pc.p[1] + (pc.q[1] - pc.p[1]) * t / pc.len];
+      return line(at(s), at(e));
+    }
+    const { c, r, a0, a1 } = pc.arc, ang = t => a0 + (a1 - a0) * t / pc.len, at = a => [c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)];
+    const b0 = ang(s), b1 = ang(e);
+    return { p: at(b0), q: at(b1), len: e - s, arc: { c, r, a0: b0, a1: b1 } };
+  }
+  // Teilt einen zusammenhängenden Weg in einzelne Schnitte. endsGap: Weg beginnt und endet mit einem Steg.
+  function dashRun(run, cfg, endsGap) {
+    const L = run.reduce((t, pc) => t + pc.len, 0);
     if (cfg.mode === 'none' || L <= 0) return [];
-    if (cfg.mode === 'solid') return [[a, b]];
+    if (cfg.mode === 'solid') return run;
     const c = Math.max(0.2, cfg.cut), g = Math.max(0.2, cfg.gap);
     let n, gap, off;
     if (endsGap) { n = Math.max(1, Math.round((L - g) / (c + g))); gap = (L - n * c) / (n + 1); off = gap; }
     else { n = Math.max(2, Math.round((L + g) / (c + g))); gap = (L - n * c) / (n - 1); off = 0; }
-    if (gap < 0.05) return [[a, b]];
-    const pt = t => [a[0] + (b[0] - a[0]) * t / L, a[1] + (b[1] - a[1]) * t / L];
+    if (gap < 0.05) return run;
     const out = [];
-    for (let i = 0; i < n; i++) { const s = off + i * (c + gap); out.push([pt(s), pt(s + c)]); }
+    for (let i = 0; i < n; i++) {
+      const s = off + i * (c + gap), e = s + c;
+      let pos = 0;
+      for (const pc of run) {
+        const a = Math.max(s, pos) - pos, b = Math.min(e, pos + pc.len) - pos;
+        if (b - a > 1e-6) out.push(clipPiece(pc, a, b));
+        pos += pc.len;
+      }
+    }
     return out;
   }
-  // Schnittlinien eines Türchens: { door: [[p,q],...], fold: [[p,q],...] } in mm.
-  function cutGeom(d, mirror) {
-    let r = mirrorRect(d, mirror), hinge = mirrorHinge(hingeOf(d), mirror);
-    const i = Math.min(state.cut.inset, r.w / 2 - 2, r.h / 2 - 2);
-    r = { x: r.x + i, y: r.y + i, w: r.w - 2 * i, h: r.h - 2 * i };
+  // Schnittrechteck: um den Bildüberstand kleiner als das Bild.
+  function cutRect(d, mirror) {
+    const r = mirrorRect(d, mirror), i = Math.max(0, Math.min(state.cut.inset, r.w / 2 - 3, r.h / 2 - 3));
+    return { x: r.x + i, y: r.y + i, w: r.w - 2 * i, h: r.h - 2 * i };
+  }
+  // Umriss eines Türchens: Wegstücke der drei Türchenkanten (mit runden Ecken) und die Knickkante.
+  function outline(d, mirror) {
+    const r = cutRect(d, mirror), hinge = mirrorHinge(hingeOf(d), mirror);
     const c = { tl: [r.x, r.y], tr: [r.x + r.w, r.y], br: [r.x + r.w, r.y + r.h], bl: [r.x, r.y + r.h] };
     const o = { left: ['tl', 'tr', 'br', 'bl'], right: ['tr', 'tl', 'bl', 'br'], top: ['tl', 'bl', 'br', 'tr'], bottom: ['bl', 'tl', 'tr', 'br'] }[hinge].map(k => c[k]);
-    const door = [];
-    for (let k = 0; k < 3; k++) door.push(...dashes(o[k], o[k + 1], state.cut.door, false));
-    return { door, fold: dashes(o[3], o[0], state.cut.fold, true) };
+    const rad = Math.max(0, Math.min(state.cut.radius, r.w / 2, r.h / 2)), rh = state.cut.roundHinge ? rad : 0;
+    const rr = [rh, rad, rad, rh];
+    const dir = (a, b) => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]); return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
+    const add = (p, v, s) => [p[0] + v[0] * s, p[1] + v[1] * s];
+    const pieces = []; let cur, foldStart, foldEnd;
+    for (let k = 0; k < 4; k++) {
+      const din = dir(o[(k + 3) % 4], o[k]), dout = dir(o[k], o[(k + 1) % 4]);
+      const a = add(o[k], din, -rr[k]), b = add(o[k], dout, rr[k]);
+      if (k > 0) { const l = line(cur, a); if (l.len > 1e-6) pieces.push(l); }
+      if (rr[k] > 0) pieces.push(arcPiece(a, b, add(a, dout, rr[k]), rr[k]));
+      cur = b;
+      if (k === 0) foldEnd = a;
+      if (k === 3) foldStart = b;
+    }
+    return { pieces, fold: line(foldStart, foldEnd), rounded: rad > 0 };
   }
-  function pathData(segs) {
+  // Schnittlinien eines Türchens als Wegstücke in mm: { door: [...], fold: [...] }.
+  function cutGeom(d, mirror) {
+    const o = outline(d, mirror);
+    // Mit runden Ecken läuft die Perforation durchgehend um das Türchen, sonst beginnt und endet jede Seite mit einem Schnitt.
+    const runs = o.rounded ? [o.pieces] : o.pieces.map(pc => [pc]);
+    return { door: runs.flatMap(run => dashRun(run, state.cut.door, false)), fold: o.fold.len > 1e-6 ? dashRun([o.fold], state.cut.fold, true) : [] };
+  }
+  // Geschlossener Umriss als Punktfolge (für feine Hilfslinien im Druck).
+  function outlinePoints(d, mirror) {
+    const o = outline(d, mirror), pts = [];
+    for (const pc of [...o.pieces, o.fold]) {
+      if (!pc.arc) { pts.push(pc.p, pc.q); continue; }
+      const { c, r, a0, a1 } = pc.arc;
+      for (let i = 0; i <= 12; i++) { const a = a0 + (a1 - a0) * i / 12; pts.push([c[0] + r * Math.cos(a), c[1] + r * Math.sin(a)]); }
+    }
+    return pts;
+  }
+  function pathData(pieces) {
     const f = v => +v.toFixed(3);
     let d = '', last = null;
-    for (const [p, q] of segs) {
-      if (last && Math.abs(last[0] - p[0]) < 1e-6 && Math.abs(last[1] - p[1]) < 1e-6) d += `L${f(q[0])} ${f(q[1])}`;
-      else d += `M${f(p[0])} ${f(p[1])}L${f(q[0])} ${f(q[1])}`;
+    for (const pc of pieces) {
+      const { p, q } = pc;
+      if (!last || Math.abs(last[0] - p[0]) > 1e-6 || Math.abs(last[1] - p[1]) > 1e-6) d += `M${f(p[0])} ${f(p[1])}`;
+      d += pc.arc ? `A${f(pc.arc.r)} ${f(pc.arc.r)} 0 0 ${pc.arc.a1 > pc.arc.a0 ? 1 : 0} ${f(q[0])} ${f(q[1])}` : `L${f(q[0])} ${f(q[1])}`;
       last = q;
     }
     return d;
@@ -460,7 +518,7 @@
       pdf.jpeg(j.bytes, j.pw, j.ph, 0, 0, W, H);
     }
     for (const d of state.doors) {
-      if (state.cover.outlines) pdf.strokeRect(d.x, d.y, d.w, d.h, '#ffffff', 0.15);
+      if (state.cover.outlines) pdf.strokePoly(outlinePoints(d, null), '#ffffff', 0.15);
       const o = overlayCanvas(d); drawNum(o.ctx, d, o.cv.width, o.cv.height); await pdf.rgba(o.cv, d.x, d.y, d.w, d.h);
     }
     return pdf.build();
@@ -470,7 +528,7 @@
     say('Rückseite wird erstellt …');
     for (const d of state.doors) {
       const r = mirrorRect(d, state.back.mirror);
-      if (state.back.outlines) pdf.strokeRect(r.x, r.y, r.w, r.h, '#bbbbbb', 0.15);
+      if (state.back.outlines) pdf.strokePoly(outlinePoints(d, state.back.mirror), '#bbbbbb', 0.15);
       if (!d.text.trim()) continue;
       const o = overlayCanvas(d); drawText(o.ctx, d, o.cv.width, o.cv.height, o.k); await pdf.rgba(o.cv, r.x, r.y, r.w, r.h);
     }

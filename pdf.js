@@ -20,6 +20,10 @@
     fillRect(x, y, w, h, hex) {
       this.ops.push(`${rgb(hex)} rg ${f(x * K)} ${f((this.H - y - h) * K)} ${f(w * K)} ${f(h * K)} re f`);
     }
+    strokePoly(pts, hex, lw) {
+      const H = this.H;
+      this.ops.push(`${rgb(hex)} RG ${f(lw * K)} w ` + pts.map((p, i) => `${f(p[0] * K)} ${f((H - p[1]) * K)} ${i ? 'l' : 'm'}`).join(' ') + ' h S');
+    }
     strokeRect(x, y, w, h, hex, lw) {
       this.ops.push(`${rgb(hex)} RG ${f(lw * K)} w ${f(x * K)} ${f((this.H - y - h) * K)} ${f(w * K)} ${f(h * K)} re S`);
     }

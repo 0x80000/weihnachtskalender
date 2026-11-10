@@ -107,7 +107,11 @@
         <div class="row" data-if="foldperf"><label>Schnittlänge</label><input type="range" min="0.3" max="10" step="0.1" data-bind="cut.fold.cut"><output></output></div>
         <div class="row" data-if="foldperf"><label>Steglänge</label><input type="range" min="0.5" max="10" step="0.1" data-bind="cut.fold.gap"><output></output></div>
 
-        <div class="row"><label title="Schnitt nach innen versetzen, damit das Bild die Öffnung sicher füllt">Versatz innen</label><input type="range" min="0" max="5" step="0.1" data-bind="cut.inset"><output></output></div>
+        <h4>Form</h4>
+        <div class="row"><label title="Radius der runden Ecken, 0 = eckig">Eckenradius</label><input type="range" min="0" max="15" step="0.5" data-bind="cut.radius"><output></output></div>
+        <label class="check"><input type="checkbox" data-bind="cut.roundHinge"><span>Auch die Ecken an der Knickkante runden</span></label>
+        <div class="row"><label title="So weit ragt das Bild rundum über den Schnitt hinaus">Bildüberstand</label><input type="range" min="0.5" max="5" step="0.1" data-bind="cut.inset"><output></output></div>
+        <p class="hint">Das Bild ist rundum um diesen Betrag größer als die Türchen-Öffnung, damit kein Rand sichtbar wird.</p>
         <label class="check"><input type="checkbox" data-bind="cut.frame"><span>Blattrahmen als Ausrichthilfe</span></label>
         <label class="check"><input type="checkbox" data-bind="cut.mirror"><span>Gespiegelt (Schnitt von der Rückseite)</span></label>
       </div>
