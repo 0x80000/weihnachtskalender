@@ -213,3 +213,19 @@ kbd { background: #10131a; border: 1px solid var(--line2); border-bottom-width: 
 
 @media (max-width: 1600px) { .brand small { display: none; } }
 @media (max-width: 1100px) { .layout { grid-template-columns: 250px 1fr 260px; } }
+
+/* Bedienumfang ändert nur die Darstellung, niemals Projekteinstellungen. */
+body[data-mode=simple] .pro-only { display: none !important; }
+body[data-mode=pro] .simple-help { display: none; }
+.simple-help { padding: 6px 4px 14px; line-height: 1.6; }
+#coverCrop, #numberPosition { display: flex; flex-direction: column; gap: 9px; }
+.stage[data-tool=number] .door { cursor: move; }
+.stage[data-tool=number] .door.sel { outline-color: var(--accent2); }
+@media (max-width: 760px) {
+  body { overflow: auto; height: auto; min-height: 100vh; }
+  .layout { display: flex; flex-direction: column; }
+  .canvas { min-height: 65vh; order: -1; }
+  .panel { overflow: visible; }
+  .topbar { gap: 6px; }
+  .topbar .seg { flex-wrap: wrap; }
+}

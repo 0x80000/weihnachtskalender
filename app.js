@@ -16,6 +16,8 @@
   const images = new Map();   // id -> { id, file, name, w, h, url (Vorschau), meta }
   let state = defaults();
   let view = 'photos', tool = 'move', sel = null, zoom = 1, scale = 2, showCut = true;
+  let uiMode = 'simple';
+  try { uiMode = localStorage.getItem('kalender-mode') === 'pro' ? 'pro' : 'simple'; } catch {}
   let history = [], future = [], commitTimer = null;
 
   const stage = $('#stage'), doorsEl = $('#doors'), wrap = $('#stageWrap'), cutSvg = $('#cutSvg');
@@ -27,7 +29,7 @@
       layout: { mode: 'grid', cols: 'auto', ratio: 'fill', margin: 15, gap: 6, seed: 7, auto: true },
       cut: { hinge: 'left', inset: 1.5, radius: 3, roundHinge: true, frame: true, mirror: false, door: { mode: 'perf', cut: 4, gap: 1 }, fold: { mode: 'perf', cut: 1, gap: 2 } },
       num: { font: 'Georgia', mode: 'rel', size: 30, mm: 14, print: true, sheetW: 200, sheetGap: 4, color: '#ffffff', badge: true, badgeColor: '#b3261e', pos: 'c', onPhotos: false },
-      cover: { color: '#1f4d3a', img: null, outlines: true },
+      cover: { color: '#1f4d3a', img: null, outlines: true, cx: .5, cy: .5, zoom: 1 },
       back: { font: 'Georgia', size: 14, bold: false, autoFit: true, uniform: true, color: '#222222', align: 'center', pad: 4, mirror: 'h', rotate: true, outlines: false, label: { inset: 2, mode: 'solid', cut: 4, gap: 1 } },
       exp: { dpi: 'max' }, geo: false,
       doors: Array.from({ length: N }, (_, i) => ({ id: 'd' + i, n: i + 1, x: 0, y: 0, w: 50, h: 50, img: null, z: 1, cx: .5, cy: .5, text: '', hinge: '', ns: 1, ts: 1 }))
@@ -331,9 +333,21 @@
     }));
   }
 
+  function numberPosition(d) {
+    const off = numEm(d) * .95;
+    const base = { c: [.5, .5], tl: [off / d.w, off / d.h], tr: [1 - off / d.w, off / d.h], bl: [off / d.w, 1 - off / d.h], br: [1 - off / d.w, 1 - off / d.h] }[state.num.pos];
+    // Keep the number and badge within its door, including after resizing.
+    const mx = Math.min(.5, numEm(d) * .85 / d.w), my = Math.min(.5, numEm(d) * .85 / d.h);
+    return [clamp(d.nx ?? base[0], mx, 1 - mx), clamp(d.ny ?? base[1], my, 1 - my)];
+  }
+  function coverCrop(im) {
+    const [W, H] = page(), k = Math.max(W / im.w, H / im.h) * state.cover.zoom;
+    const sw = W / k, sh = H / k;
+    return { k, sw, sh, sx: (im.w - sw) * state.cover.cx, sy: (im.h - sh) * state.cover.cy };
+  }
   function drawNum(ctx, d, w, h) {
-    const Nm = state.num, s = numEm(d) * w / d.w, off = s * 0.95;
-    const [x, y] = { c: [w / 2, h / 2], tl: [off, off], tr: [w - off, off], bl: [off, h - off], br: [w - off, h - off] }[Nm.pos];
+    const Nm = state.num, s = numEm(d) * w / d.w;
+    const [nx, ny] = numberPosition(d), x = nx * w, y = ny * h;
     ctx.save();
     if (Nm.badge) { ctx.fillStyle = Nm.badgeColor; ctx.beginPath(); ctx.arc(x, y, s * 0.8, 0, Math.PI * 2); ctx.fill(); }
     else { ctx.shadowColor = 'rgba(0,0,0,.55)'; ctx.shadowBlur = s * 0.18; }
@@ -409,6 +423,11 @@
     stage.style.backgroundColor = view === 'photos' ? state.bg : view === 'cover' ? state.cover.color : '#ffffff';
     stage.style.backgroundImage = view === 'cover' && cov ? `url(${cov.url})` : 'none';
 
+    if (view === 'cover' && cov) {
+      const g = coverCrop(cov);
+      stage.style.backgroundSize = `${cov.w * g.k * scale}px ${cov.h * g.k * scale}px`;
+      stage.style.backgroundPosition = `${-g.sx * g.k * scale}px ${-g.sy * g.k * scale}px`;
+    }
     const dpr = window.devicePixelRatio || 1, origin = stage.getBoundingClientRect();
     const live = new Set();
     for (const d of state.doors) {
@@ -468,6 +487,13 @@
   }
 
   function syncUi() {
+    document.body.dataset.mode = uiMode;
+    for (const b of $$('[data-mode-choice]')) {
+      const active = b.dataset.modeChoice === uiMode; b.classList.toggle('on', active); b.setAttribute('aria-pressed', active);
+    }
+    $('[data-tool=number]').hidden = view !== 'cover';
+    $('#coverCrop').hidden = !images.has(state.cover.img);
+    $('#coverStatus').textContent = images.has(state.cover.img) ? images.get(state.cover.img).name : 'Noch kein Hintergrundbild gewählt.';
     const [W, H] = page(), L = state.layout;
     for (const el of $$('[data-bind]')) {
       const v = getPath(el.dataset.bind);
@@ -475,7 +501,7 @@
       if (el.type === 'checkbox') el.checked = !!v;
       else if (el !== document.activeElement || el.type === 'range') el.value = v;
       const out = el.nextElementSibling;
-      if (out && out.tagName === 'OUTPUT') out.textContent = String(v).replace('.', ',') + ' ' + (out.dataset.unit || 'mm');
+      if (out && out.tagName === 'OUTPUT') out.textContent = ['cover.cx', 'cover.cy'].includes(el.dataset.bind) ? Math.round(v * 100) + ' %' : String(v).replace('.', ',') + ' ' + (out.dataset.unit || 'mm');
     }
     const flags = { grid: L.mode === 'grid', mosaic: L.mode === 'mosaic', doorperf: state.cut.door.mode === 'perf', foldperf: state.cut.fold.mode === 'perf', numrel: state.num.mode === 'rel', numabs: state.num.mode === 'abs', labelperf: state.back.label.mode === 'perf' };
     for (const el of $$('[data-if]')) el.hidden = !flags[el.dataset.if];
@@ -491,7 +517,7 @@
     const texts = state.doors.filter(d => d.text.trim()).length;
     $('#progBar').style.width = withImg.length / N * 100 + '%';
     $('#stats').innerHTML = `<b>${withImg.length} von ${N}</b> Bildern platziert · ${texts} Texte` + (low ? `<br><span style="color:var(--accent2)">⚠ ${low} Bild${low > 1 ? 'er' : ''} unter 150 dpi – kleiner anordnen oder weniger zoomen</span>` : '');
-    $('#dropHint').hidden = withImg.length > 0;
+    $('#dropHint').hidden = withImg.length > 0 || view !== 'photos';
     $('#viewNote').textContent = {
       photos: 'Bilderbogen – liegt hinter dem Deckblatt',
       cover: 'Deckblatt – Vorderseite mit Nummern, wird geschnitten',
@@ -524,7 +550,10 @@
     const d = selDoor();
     $('#insBody').hidden = !d; $('#insEmpty').hidden = !!d;
     $('#insTitle').textContent = d ? 'Türchen ' + d.n : 'Kein Türchen gewählt';
+    $('#numberPosition').hidden = !d || view !== 'cover';
     if (!d) return;
+    const np = numberPosition(d);
+    for (const el of $$('[data-number-axis]')) el.value = Math.round(np[el.dataset.numberAxis === 'nx' ? 0 : 1] * 100);
     for (const el of $$('[data-door]')) {
       const k = el.dataset.door;
       if (el !== document.activeElement || el.type === 'range') el.value = typeof d[k] === 'number' && k !== 'n' ? r2(d[k]) : d[k];
@@ -678,8 +707,8 @@
     pdf.fillRect(0, 0, W, H, state.cover.color);
     const im = images.get(state.cover.img);
     if (im) {
-      const s = Math.max(W / im.w, H / im.h), sw = W / s, sh = H / s;
-      const j = await cropJpeg(im, (im.w - sw) / 2, (im.h - sh) / 2, sw, sh, W);
+      const { sx, sy, sw, sh } = coverCrop(im);
+      const j = await cropJpeg(im, sx, sy, sw, sh, W);
       pdf.jpeg(j.bytes, j.pw, j.ph, 0, 0, W, H);
     }
     for (const d of state.doors) {
@@ -814,6 +843,8 @@
     sortByDate: () => { redistribute(l => l.sort((a, b) => { const x = images.get(a), y = images.get(b); return (x.meta.date || x.file.lastModified) - (y.meta.date || y.file.lastModified); })); changed(); toast('Bilder chronologisch auf Türchen 1–24 verteilt', 'ok'); },
     shuffleImgs: () => { redistribute(shuffle); changed(); },
     coverImage: () => pickFiles(false, f => f[0] && busy('Bild wird geladen …', async () => { state.cover.img = (await loadImage(f[0])).id; view = 'cover'; changed(); })),
+    numberReset: () => { const d = selDoor(); if (d) { delete d.nx; delete d.ny; changed(); } },
+    coverCenter: () => { Object.assign(state.cover, { cx: .5, cy: .5, zoom: 1 }); changed(); },
     coverClear: () => { state.cover.img = null; changed(); },
     doorReplace: () => { const d = selDoor(); if (d) pickFiles(false, f => addFiles(f, d.id)); },
     doorCenter: () => { const d = selDoor(); if (d) { d.z = 1; d.cx = d.cy = .5; changed(); } },
@@ -827,8 +858,13 @@
 
   document.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.modeChoice) {
+      uiMode = b.dataset.modeChoice;
+      try { localStorage.setItem('kalender-mode', uiMode); } catch {}
+      return render();
+    }
     if (b.dataset.act) return actions[b.dataset.act]();
-    if (b.dataset.view) { view = b.dataset.view; return render(); }
+    if (b.dataset.view) { view = b.dataset.view; if (tool === 'number' && view !== 'cover') tool = 'move'; return render(); }
     if (b.dataset.tool) { tool = b.dataset.tool; return render(); }
     const seg = b.closest('.seg[data-bind]');
     if (seg) { applyBind(seg.dataset.bind, b.dataset.v); changed(); }
@@ -837,6 +873,7 @@
   function applyBind(path, v) {
     const [pw, ph] = page();
     setPath(path, v);
+    if (path.startsWith('cover.')) view = 'cover';
     if (path === 'format' || path === 'orient') {
       if (state.layout.auto) applyAuto();
       else { const [W, H] = page(); for (const d of state.doors) { d.x = r2(d.x * W / pw); d.w = r2(d.w * W / pw); d.y = r2(d.y * H / ph); d.h = r2(d.h * H / ph); } }
@@ -846,6 +883,9 @@
   }
   document.addEventListener('input', e => {
     const el = e.target;
+    if (el.dataset.numberAxis) {
+      const d = selDoor(); if (d) { d[el.dataset.numberAxis] = +el.value / 100; touch(); } return;
+    }
     if (el.id === 'showCut') { showCut = el.checked; return render(); }
     if (el.dataset.bind) {
       applyBind(el.dataset.bind, el.type === 'checkbox' ? el.checked : (el.type === 'range' || el.type === 'number') ? +el.value : el.value);
@@ -867,7 +907,7 @@
       touch();
     }
   });
-  document.addEventListener('change', e => { if (e.target.dataset.bind || e.target.dataset.door) commit(); });
+  document.addEventListener('change', e => { if (e.target.dataset.bind || e.target.dataset.door || e.target.dataset.numberAxis) commit(); });
 
   // ------------------------------------------------------------------ Maus-Interaktion auf der Seite
   let drag = null;
@@ -892,6 +932,7 @@
     const d = doorById(el.dataset.id);
     sel = d.id;
     let mode = view === 'back' ? null : e.target.dataset.h ? 'resize' : (e.shiftKey && tool === 'move') ? 'crop' : tool;
+    if (tool === 'number') mode = view === 'cover' && state.num.print ? 'number' : null;
     if (mode === 'crop' && !images.get(d.img)) mode = null;
     if (mode === 'swap' && !images.get(d.img)) mode = null;
     if (mode) { drag = { mode, d, handle: e.target.dataset.h, sx: e.clientX, sy: e.clientY, o: { ...d }, moved: false, lines: snapLines(d.id) }; stage.setPointerCapture(e.pointerId); }
@@ -904,7 +945,11 @@
     drag.moved = true;
     const [W, H] = page(), tol = e.altKey ? 0 : 6 / scale, { xs, ys } = drag.lines;
     let gx = null, gy = null;
-    if (drag.mode === 'move') {
+    if (drag.mode === 'number') {
+      const [nx, ny] = numberPosition(o);
+      d.nx = nx + dx / d.w; d.ny = ny + dy / d.h;
+      [d.nx, d.ny] = numberPosition(d);
+    } else if (drag.mode === 'move') {
       let nx = o.x + dx, ny = o.y + dy;
       const a = nearest(nx, xs, tol), b = nearest(nx + d.w, xs, tol);
       if (a != null && (b == null || Math.abs(a - nx) <= Math.abs(b - nx - d.w))) { nx = a; gx = a; } else if (b != null) { nx = b - d.w; gx = b; }
