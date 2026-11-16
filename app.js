@@ -125,26 +125,69 @@
     const b0 = ang(s), b1 = ang(e);
     return { p: at(b0), q: at(b1), len: e - s, arc: { c, r, a0: b0, a1: b1 } };
   }
-  // Teilt einen zusammenhängenden Weg in einzelne Schnitte. endsGap: Weg beginnt und endet mit einem Steg.
-  function dashRun(run, cfg, endsGap) {
-    const L = run.reduce((t, pc) => t + pc.len, 0);
-    if (cfg.mode === 'none' || L <= 0) return [];
-    if (cfg.mode === 'solid') return run;
-    const c = Math.max(0.2, cfg.cut), g = Math.max(0.2, cfg.gap);
-    let n, gap, off;
-    if (endsGap) { n = Math.max(1, Math.round((L - g) / (c + g))); gap = (L - n * c) / (n + 1); off = gap; }
-    else { n = Math.max(2, Math.round((L + g) / (c + g))); gap = (L - n * c) / (n - 1); off = 0; }
-    if (gap < 0.05) return run;
+  // Erste (part 0) oder zweite (part 1) Hälfte eines Eckbogens.
+  const halfArc = (pc, part) => pc ? clipPiece(pc, part ? pc.len / 2 : 0, part ? pc.len : pc.len / 2) : null;
+  // Perforation mit fester Steglänge: Die Stege sind immer genau so lang wie eingestellt,
+  // die Schnittlänge wird so angepasst, dass die Stege gleichmäßig verteilt sind.
+  // Der Weg ist eine Folge gerader Kanten: [{ pre, line, post }]. Stege liegen nur auf den geraden
+  // Stücken (line), nie in den Ecken; pre/post sind Eckbögen, die zum ersten bzw. letzten Schnitt gehören.
+  // Jede Kante beginnt und endet mit einem Schnitt und bekommt mindestens einen Steg, sofern sie lang genug ist.
+  function perfEdges(edges, cfg) {
+    if (cfg.mode === 'none') return [];
+    const all = edges.flatMap(ed => [...ed.pre, ed.line, ...ed.post].filter(pc => pc && pc.len > 1e-6));
+    if (cfg.mode === 'solid') return all;
+    const c = Math.max(0.2, cfg.cut), g = Math.max(0.2, cfg.gap), MIN = 0.2;
     const out = [];
-    for (let i = 0; i < n; i++) {
-      const s = off + i * (c + gap), e = s + c;
-      let pos = 0;
-      for (const pc of run) {
-        const a = Math.max(s, pos) - pos, b = Math.min(e, pos + pc.len) - pos;
-        if (b - a > 1e-6) out.push(clipPiece(pc, a, b));
-        pos += pc.len;
+    for (const ed of edges) {
+      const pre = ed.pre.filter(pc => pc.len > 1e-6), post = ed.post.filter(pc => pc.len > 1e-6);
+      const a0 = pre.reduce((t, pc) => t + pc.len, 0), a1 = post.reduce((t, pc) => t + pc.len, 0);
+      const L = ed.line ? ed.line.len : 0;
+      const gaps = gapStarts(L, a0, a1, c, g, MIN);
+      out.push(...pre);
+      if (!gaps.length) { if (L > 1e-6) out.push(ed.line); }
+      else {
+        let s = 0;
+        for (const p of gaps) { if (p - s > 1e-6) out.push(clipPiece(ed.line, s, p)); s = p + g; }
+        if (L - s > 1e-6) out.push(clipPiece(ed.line, s, L));
       }
+      out.push(...post);
     }
+    return out;
+  }
+  // Startpositionen der Stege auf einer geraden Kante der Länge L (mit Eckbögen a0 davor und a1 danach).
+  // Alle Schnitte (Eckbögen mitgerechnet) werden gleich lang und möglichst nah an der eingestellten Schnittlänge c.
+  function gapStarts(L, a0, a1, c, g, MIN) {
+    const T = a0 + L + a1;
+    for (let n = Math.max(2, Math.round((T + g) / (c + g))); n >= 2; n--) {
+      const x = (T - (n - 1) * g) / n;            // Länge eines Schnitts
+      let e0 = x - a0, e1 = x - a1, xi = x;       // Anteil der Endschnitte auf der Geraden, innere Schnitte
+      if (n === 2) {
+        // Ein Steg: so mittig wie möglich, aber immer auf der Geraden.
+        if (L < g + (a0 > 0 ? 0 : MIN) + (a1 > 0 ? 0 : MIN)) continue;
+        e0 = Math.min(Math.max(e0, a0 > 0 ? 0 : MIN), L - g - (a1 > 0 ? 0 : MIN));
+        e1 = L - g - e0;
+      } else if (e0 < 0 || e1 < 0) {
+        // Eckbogen länger als ein Schnitt: Endschnitt endet am Bogen, die übrigen Schnitte teilen sich den Rest.
+        e0 = Math.max(e0, 0); e1 = Math.max(e1, 0);
+        xi = (L - e0 - e1 - (n - 1) * g) / (n - 2);
+      }
+      if (xi < MIN || (n > 2 && x < MIN)) continue;
+      const out = []; let p = e0;
+      for (let i = 0; i < n - 1; i++) { out.push(p); p += g + xi; }
+      return out;
+    }
+    return [];
+  }
+  // Knickkante: beginnt und endet mit einem Steg, Steglänge fest, Schnitte gleich lang.
+  function perfFold(fold, cfg) {
+    const L = fold.len;
+    if (cfg.mode === 'none' || L <= 1e-6) return [];
+    if (cfg.mode === 'solid') return [fold];
+    const c = Math.max(0.2, cfg.cut), g = Math.max(0.2, cfg.gap);
+    if (L < 2 * g + 0.2) return [];
+    const n = Math.max(1, Math.min(Math.round((L - g) / (c + g)), Math.floor((L - g) / (g + 0.2))));
+    const x = (L - (n + 1) * g) / n, out = [];
+    for (let i = 0; i < n; i++) { const s = g + i * (x + g); out.push(clipPiece(fold, s, s + x)); }
     return out;
   }
   // Schnittrechteck: um den Bildüberstand kleiner als das Bild.
@@ -161,24 +204,31 @@
     const rr = [rh, rad, rad, rh];
     const dir = (a, b) => { const L = Math.hypot(b[0] - a[0], b[1] - a[1]); return [(b[0] - a[0]) / L, (b[1] - a[1]) / L]; };
     const add = (p, v, s) => [p[0] + v[0] * s, p[1] + v[1] * s];
-    const pieces = []; let cur, foldStart, foldEnd;
+    const pieces = [], lines = [], arcs = []; let cur, foldStart, foldEnd;
     for (let k = 0; k < 4; k++) {
       const din = dir(o[(k + 3) % 4], o[k]), dout = dir(o[k], o[(k + 1) % 4]);
       const a = add(o[k], din, -rr[k]), b = add(o[k], dout, rr[k]);
-      if (k > 0) { const l = line(cur, a); if (l.len > 1e-6) pieces.push(l); }
-      if (rr[k] > 0) pieces.push(arcPiece(a, b, add(a, dout, rr[k]), rr[k]));
+      if (k > 0) { const l = line(cur, a); lines.push(l); if (l.len > 1e-6) pieces.push(l); }
+      arcs.push(rr[k] > 0 ? arcPiece(a, b, add(a, dout, rr[k]), rr[k]) : null);
+      if (arcs[k]) pieces.push(arcs[k]);
       cur = b;
       if (k === 0) foldEnd = a;
       if (k === 3) foldStart = b;
     }
-    return { pieces, fold: line(foldStart, foldEnd), rounded: rad > 0 };
+    // Drei gerade Türchenkanten; die äußeren Eckbögen werden zwischen den Kanten geteilt,
+    // die Bögen an der Knickkante gehören ganz zur angrenzenden Türchenkante.
+    const edges = lines.map((l, i) => ({
+      pre: i === 0 ? [arcs[0]] : [halfArc(arcs[i], 1)],
+      line: l,
+      post: i === 2 ? [arcs[3]] : [halfArc(arcs[i + 1], 0)],
+    })).map(ed => ({ ...ed, pre: ed.pre.filter(Boolean), post: ed.post.filter(Boolean) }));
+    return { pieces, edges, fold: line(foldStart, foldEnd), rounded: rad > 0 };
   }
   // Schnittlinien eines Türchens als Wegstücke in mm: { door: [...], fold: [...] }.
   function cutGeom(d, mirror) {
     const o = outline(d, mirror);
-    // Mit runden Ecken läuft die Perforation durchgehend um das Türchen, sonst beginnt und endet jede Seite mit einem Schnitt.
-    const runs = o.rounded ? [o.pieces] : o.pieces.map(pc => [pc]);
-    return { door: runs.flatMap(run => dashRun(run, state.cut.door, false)), fold: o.fold.len > 1e-6 ? dashRun([o.fold], state.cut.fold, true) : [] };
+    // Jede Türchenkante beginnt und endet mit einem Schnitt, die Ecken bleiben durchgeschnitten.
+    return { door: perfEdges(o.edges, state.cut.door), fold: perfFold(o.fold, state.cut.fold) };
   }
   // Geschlossener Umriss als Punktfolge (für feine Hilfslinien im Druck).
   function outlinePoints(d, mirror) {
@@ -196,16 +246,18 @@
     const r = { x: c.x + i, y: c.y + i, w: c.w - 2 * i, h: c.h - 2 * i };
     const rad = Math.max(0, Math.min(state.cut.radius - i, r.w / 2, r.h / 2));
     const o = [[r.x, r.y], [r.x + r.w, r.y], [r.x + r.w, r.y + r.h], [r.x, r.y + r.h]], dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]];
-    const pieces = []; let cur, first;
+    const lines = [], arcs = []; let cur, first;
     for (let k = 0; k < 4; k++) {
       const din = dirs[(k + 3) % 4], dout = dirs[k];
       const a = [o[k][0] - din[0] * rad, o[k][1] - din[1] * rad], b = [o[k][0] + dout[0] * rad, o[k][1] + dout[1] * rad];
-      if (k > 0) pieces.push(line(cur, a)); else first = a;
-      if (rad > 0) pieces.push(arcPiece(a, b, [a[0] + dout[0] * rad, a[1] + dout[1] * rad], rad));
+      if (k > 0) lines.push(line(cur, a)); else first = a;
+      arcs.push(rad > 0 ? arcPiece(a, b, [a[0] + dout[0] * rad, a[1] + dout[1] * rad], rad) : null);
       cur = b;
     }
-    pieces.push(line(cur, first));
-    return dashRun(pieces.filter(pc => pc.len > 1e-6), state.back.label, false);
+    lines.push(line(cur, first));
+    // Vier gerade Kanten (beginnend nach Ecke 0), jeder Eckbogen wird zwischen den angrenzenden Kanten geteilt.
+    const edges = lines.map((l, i) => ({ pre: [halfArc(arcs[i], 1)].filter(Boolean), line: l, post: [halfArc(arcs[(i + 1) % 4], 0)].filter(Boolean) }));
+    return perfEdges(edges, state.back.label);
   }
   // Abstand des Textes vom Türchenrand: Innenabstand ab der Kante des Textkärtchens.
   const textPad = d => Math.min(state.back.pad + state.cut.inset + state.back.label.inset, d.w / 4, d.h / 4);
@@ -1063,5 +1115,5 @@
   applyAuto();
   changed();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
-  window.kalender = { addFiles, build: { photos: buildPhotos, cover: buildCover, back: buildBack, cut: buildCut, nums: buildNums, labels: buildLabels }, get state() { return state; } };
+  window.kalender = { addFiles, geom: { cutGeom, labelPieces }, build: { photos: buildPhotos, cover: buildCover, back: buildBack, cut: buildCut, nums: buildNums, labels: buildLabels }, get state() { return state; } };
 })();

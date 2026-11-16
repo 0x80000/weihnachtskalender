@@ -14,7 +14,7 @@ Web-App zum Gestalten eines Bilder-Türchen-Adventskalenders: 24 Fotos auf A3 od
 - Türchen frei verschieben und skalieren (mit Einrasten) oder automatisch anordnen – als Raster oder als Mosaik
 - Bildausschnitt je Türchen verschieben und zoomen, Bilder tauschen, mischen oder nach Aufnahmedatum verteilen
 - Metadaten beim Überfahren mit der Maus: Aufnahmedatum, Ort (GPS), Kamera, Belichtung, Druckauflösung
-- Perforation für Türchenkante und Knickkante getrennt einstellbar (Schnittlänge und Steglänge), Scharnierseite global oder je Türchen
+- Perforation für Türchenkante und Knickkante getrennt einstellbar (Schnittlänge und Steglänge; die Steglänge wird exakt eingehalten, die Schnitte werden gleichmäßig verteilt, Ecken bleiben stegfrei), Scharnierseite global oder je Türchen
 - Text für die Rückseite jedes Türchens, passend gespiegelt für den beidseitigen Druck
 - Türchen-Nummern mit wählbarer Schrift, Größe, Farbe und Position
 - Projekt speichern und öffnen (inklusive Bildern), Rückgängig/Wiederholen
