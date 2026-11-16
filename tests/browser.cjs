@@ -42,6 +42,22 @@ const assert = require('node:assert/strict');
  const open=page.waitForEvent('filechooser');await page.locator('[data-act="openProject"]').click();await(await open).setFiles(file);
  await page.waitForFunction(()=>window.kalender.state.cover.img !== null);
  assert.equal(await page.evaluate(()=>window.kalender.state.doors[0].nx),.7);
+ // Cover outlines affect preview/PDF only; cutting geometry is preserved.
+ const outline=page.locator('[data-bind="cover.outlines"]');
+ assert.equal(await outline.isVisible(),true);
+ const cutBefore=await page.evaluate(async()=>await window.kalender.build.cut(()=>{}).text());
+ await outline.uncheck();
+ assert.equal(await page.locator('#cutSvg path').count(),0);
+ assert.equal(await page.locator('.door').first().evaluate(e=>getComputedStyle(e).boxShadow),'none');
+ const countStrokes=()=>page.evaluate(async()=>{
+   const original=window.Pdf.prototype.strokePoly;let count=0;
+   window.Pdf.prototype.strokePoly=function(...args){count++;return original.apply(this,args)};
+   try {await window.kalender.build.cover(()=>{});return count;} finally {window.Pdf.prototype.strokePoly=original;}
+ });
+ assert.equal(await countStrokes(),0);
+ assert.equal(await page.evaluate(async()=>await window.kalender.build.cut(()=>{}).text()),cutBefore);
+ await outline.check();assert.equal(await countStrokes(),24);
+ await outline.uncheck();
  const pdf=await page.evaluate(async()=>{const b=await window.kalender.build.cover(()=>{});return {size:b.size,header:await b.slice(0,5).text()}});
  assert.equal(pdf.header,'%PDF-');assert(pdf.size>1000);
  // Legacy projects without new crop/number fields continue to work.

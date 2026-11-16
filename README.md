@@ -53,3 +53,5 @@ In der Ansicht **Deckblatt → Zahlen verschieben** ein Türchen ziehen, um nur 
 ### Browserprüfung
 
 Mit installiertem Node.js, Playwright und Chromium: lokalen Server mit `python3 -m http.server 8010 --bind 127.0.0.1` starten, dann `node tests/browser.cjs http://127.0.0.1:8010` ausführen. Bei anderem Chromium-Pfad `CHROMIUM_PATH` setzen. Die Prüfung testet Modi, Deckblattbild und Ausschnitt, Zahlenposition, Undo/Redo, Projektdateien (auch ältere) und PDF-Erzeugung.
+
+Die Option **Türchen-Umrandung auf dem Deckblatt** ist in beiden Modi verfügbar. Ausschalten entfernt die Umrisse in Vorschau und Deckblatt-PDF; die separate Schnittdatei enthält weiterhin die Perforation.
