@@ -27,7 +27,7 @@
     return {
       format: 'A3', orient: 'portrait', bg: '#ffffff',
       layout: { mode: 'grid', cols: 'auto', ratio: 'fill', margin: 15, gap: 6, seed: 7, auto: true },
-      cut: { hinge: 'left', inset: 1.5, radius: 3, roundHinge: true, frame: true, mirror: false, door: { mode: 'perf', cut: 4, gap: 1 }, fold: { mode: 'perf', cut: 1, gap: 2 } },
+      cut: { hinge: 'left', inset: 1.5, radius: 3, roundHinge: true, frame: true, gauge: true, mirror: false, door: { mode: 'perf', cut: 4, gap: 1 }, fold: { mode: 'perf', cut: 1, gap: 2 } },
       num: { font: 'Georgia', mode: 'rel', size: 30, mm: 14, print: true, sheetW: 200, sheetGap: 4, color: '#ffffff', badge: true, badgeColor: '#b3261e', pos: 'c', onPhotos: false },
       cover: { color: '#1f4d3a', img: null, outlines: true, cx: .5, cy: .5, zoom: 1 },
       back: { font: 'Georgia', size: 14, bold: false, autoFit: true, uniform: true, color: '#222222', align: 'center', pad: 4, mirror: 'h', rotate: true, outlines: false, label: { inset: 2, mode: 'solid', cut: 4, gap: 1 } },
@@ -463,6 +463,60 @@
     ctx.restore();
   }
 
+  // ------------------------------------------------------------------ Kontrollmaßstrecke
+  // 100 mm lange Messstrecke mit Teilstrichen alle 10 mm. Sie liegt im verdeckten Bereich des
+  // Bilderbogens (außerhalb aller Türchen, mindestens 5 mm vom Blattrand, bevorzugt im Seitenrand)
+  // und an exakt derselben Stelle als Hilfslinie in der Schnittdatei.
+  const GAUGE = { len: 100, depth: 6, label: 2.5, edge: 5, clear: 3 };
+  // Liefert { x, y, w, h, vert } (mm) oder null, wenn kein freier Platz vorhanden ist.
+  function gaugePlace() {
+    const [W, H] = page(), { len, depth, edge, clear } = GAUGE, e = 1e-6;
+    const free = (x, y, w, h) => x >= edge - e && y >= edge - e && x + w <= W - edge + e && y + h <= H - edge + e &&
+      state.doors.every(d => x + w <= d.x - clear + e || x >= d.x + d.w + clear - e || y + h <= d.y - clear + e || y >= d.y + d.h + clear - e);
+    let best = null, bestScore = Infinity;
+    for (const vert of [false, true]) {
+      const w = vert ? depth : len, h = vert ? len : depth;
+      const xs = [edge, W - edge - w, (W - w) / 2], ys = [edge, H - edge - h, (H - h) / 2];
+      for (const d of state.doors) { xs.push(d.x + d.w + clear, d.x - clear - w); ys.push(d.y + d.h + clear, d.y - clear - h); }
+      for (const x of xs) for (const y of ys) {
+        if (!free(x, y, w, h)) continue;
+        // Nähe zum Blattrand zuerst, dann waagerecht vor senkrecht, unten/rechts vor oben/links, dann mittig
+        const toEdge = Math.round((Math.min(x, y, W - x - w, H - y - h) - edge) * 10);
+        const side = vert ? (x + w / 2 < W / 2) : (y + h / 2 < H / 2);
+        const center = vert ? Math.abs(y + h / 2 - H / 2) : Math.abs(x + w / 2 - W / 2);
+        const score = toEdge * 1e7 + (vert ? 1e6 : 0) + (side ? 1e5 : 0) + center;
+        if (score < bestScore) { bestScore = score; best = { x, y, w, h, vert }; }
+      }
+    }
+    return best;
+  }
+  // Linienzüge der Strecke in mm (Grundlinie und Teilstriche), optional gespiegelt wie die Schnittdatei.
+  function gaugeLines(g, mirror) {
+    const { len, depth } = GAUGE, [W] = page();
+    const at = (u, v) => {
+      const p = g.vert ? [g.x + v, g.y + len - u] : [g.x + u, g.y + v];
+      return mirror === 'h' ? [W - p[0], p[1]] : p;
+    };
+    const out = [[at(0, depth), at(len, depth)]];
+    for (let u = 0; u <= len; u += 10) out.push([at(u, depth), at(u, depth - (u === 0 || u === len ? 3 : u === 50 ? 2.2 : 1.5))]);
+    return out;
+  }
+  const gaugePath = lines => lines.map(l => l.map((p, i) => `${i ? 'L' : 'M'}${+p[0].toFixed(3)} ${+p[1].toFixed(3)}`).join('')).join('');
+  // Beschriftung als transparentes Bild (Rechteck in mm und Canvas).
+  function gaugeLabel(g) {
+    const { len, label } = GAUGE, lw = len / 2, k = 600 / 25.4;
+    const r = g.vert ? { x: g.x, y: g.y + (len - lw) / 2, w: label, h: lw } : { x: g.x + (len - lw) / 2, y: g.y, w: lw, h: label };
+    const cv = document.createElement('canvas'); cv.width = Math.round(r.w * k); cv.height = Math.round(r.h * k);
+    const ctx = cv.getContext('2d');
+    if (g.vert) { ctx.translate(0, cv.height); ctx.rotate(-Math.PI / 2); }
+    const tw = lw * k, th = label * k, text = 'Kontrollmaß 100 mm – Druck mit 100 %';
+    ctx.font = `600 ${th * 0.8}px Arial, sans-serif`; ctx.fillStyle = '#000000'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    const s = Math.min(1, tw / ctx.measureText(text).width);
+    ctx.translate(tw / 2, th / 2); ctx.scale(s, s); ctx.fillText(text, 0, 0);
+    return { r, cv };
+  }
+  const gaugeMissing = 'Kein freier Platz für die Kontrollmaßstrecke (100 × 6 mm außerhalb der Türchen, 5 mm vom Rand) – Rand vergrößern oder Türchen verkleinern.';
+
   // ------------------------------------------------------------------ Rendering
   function render() {
     const sheet = view === 'nums' ? numSheet() : null;
@@ -534,6 +588,7 @@
       svg += `<path class="cd" d="${a}"/><path class="cf" d="${b}"/>`;
       if (view === 'back') svg += `<path class="cl" d="${state.doors.filter(d => d.text.trim()).map(d => pathData(labelPieces(d, m))).join('')}"/>`;
     }
+    if (state.cut.gauge && (view === 'photos' || view === 'cut')) { const g = gaugePlace(); if (g) svg += `<path class="fr gauge" d="${gaugePath(gaugeLines(g, null))}"/>`; }
     cutSvg.innerHTML = svg;
 
     syncUi();
@@ -562,6 +617,10 @@
     for (const b of $$('#toolSeg button')) b.classList.toggle('on', b.dataset.tool === tool);
     $('#zoomLabel').textContent = Math.round(zoom * 100) + ' %';
     $('#pageInfo').textContent = `${state.format} · ${W} × ${H} mm`;
+    const gp = state.cut.gauge ? gaugePlace() : null;
+    $('#gaugeInfo').textContent = !state.cut.gauge ? 'Ohne Kontrollmaßstrecke – Skalierungsfehler fallen erst beim Plotten auf.'
+      : gp ? `Liegt ${gp.vert ? (gp.x + gp.w / 2 < W / 2 ? 'links' : 'rechts') : (gp.y + gp.h / 2 < H / 2 ? 'oben' : 'unten')} im verdeckten Rand des Bilderbogens.` : '⚠ ' + gaugeMissing;
+    $('#gaugeInfo').classList.toggle('warnhint', !!state.cut.gauge && !gp);
     $('#autoInfo').textContent = L.auto ? 'Automatik aktiv – Rand und Abstand wirken sofort.' : 'Freie Anordnung – „Automatisch anordnen“ richtet neu aus.';
     $('[data-act=undo]').disabled = history.length < 2; $('[data-act=redo]').disabled = !future.length;
 
@@ -752,6 +811,11 @@
       pdf.jpeg(j.bytes, j.pw, j.ph, d.x + vx, d.y + vy, vw, vh);
       if (state.num.onPhotos) { const o = overlayCanvas(d); drawNum(o.ctx, d, o.cv.width, o.cv.height); await pdf.rgba(o.cv, d.x, d.y, d.w, d.h); }
     }
+    const gp = state.cut.gauge && gaugePlace();
+    if (gp) {
+      for (const l of gaugeLines(gp, null)) pdf.strokeLine(l, '#000000', 0.2);
+      const lb = gaugeLabel(gp); await pdf.rgba(lb.cv, lb.r.x, lb.r.y, lb.r.w, lb.r.h);
+    }
     return pdf.build();
   }
   async function buildCover(say) {
@@ -787,6 +851,8 @@
     let s = `<?xml version="1.0" encoding="UTF-8"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="${W}mm" height="${H}mm" viewBox="0 0 ${W} ${H}">\n`;
     s += `<title>Adventskalender Schnittdatei ${state.format}</title>\n`;
     if (state.cut.frame) s += `<path id="blattrahmen" fill="none" stroke="#888888" stroke-width="0.1" d="M0 0L${W} 0L${W} ${H}L0 ${H}Z"/>\n`;
+    const gp = state.cut.gauge && gaugePlace();
+    if (gp) s += `<path id="kontrollmass" fill="none" stroke="#888888" stroke-width="0.1" d="${gaugePath(gaugeLines(gp, m))}"><title>Kontrollmaßstrecke 100 mm – auf den Scan legen, vor dem Schneiden löschen</title></path>\n`;
     let a = '', b = '';
     for (const d of [...state.doors].sort((p, q) => p.n - q.n)) {
       const g = cutGeom(d, m), id = String(d.n).padStart(2, '0');
@@ -817,8 +883,12 @@
     expPhotos: async say => {
       if (!state.doors.some(d => images.get(d.img))) return toast('Noch keine Bilder platziert.', 'err');
       download(await buildPhotos(say), fileName(1, 'bilderbogen', 'pdf'));
+      if (state.cut.gauge && !gaugePlace()) toast(gaugeMissing, 'err');
     },
-    expCut: async () => download(buildCut(), fileName(2, 'schnittdatei', 'svg')),
+    expCut: async () => {
+      download(buildCut(), fileName(2, 'schnittdatei', 'svg'));
+      if (state.cut.gauge && !gaugePlace()) toast(gaugeMissing, 'err');
+    },
     expBack: async say => download(await buildBack(say), fileName(3, 'rueckseite', 'pdf')),
     expCover: async say => download(await buildCover(say), fileName(4, 'deckblatt', 'pdf')),
     expNums: async () => download(buildNums(), fileName(5, 'zahlen', 'svg')),
@@ -1115,5 +1185,5 @@
   applyAuto();
   changed();
   if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
-  window.kalender = { addFiles, geom: { cutGeom, labelPieces }, build: { photos: buildPhotos, cover: buildCover, back: buildBack, cut: buildCut, nums: buildNums, labels: buildLabels }, get state() { return state; } };
+  window.kalender = { addFiles, geom: { cutGeom, labelPieces, gaugePlace, gaugeLines }, build: { photos: buildPhotos, cover: buildCover, back: buildBack, cut: buildCut, nums: buildNums, labels: buildLabels }, get state() { return state; } };
 })();
