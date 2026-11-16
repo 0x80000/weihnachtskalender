@@ -11,11 +11,15 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body data-mode="simple">
 
 <header class="topbar">
   <div class="brand"><span class="logo">24</span><div><b>Adventskalender Studio</b><small>Bilder-Türchen-Kalender gestalten</small></div></div>
 
+  <div class="seg" aria-label="Bedienmodus">
+    <button data-mode-choice="simple" aria-pressed="true">Simple Mode</button>
+    <button data-mode-choice="pro" aria-pressed="false">Profi Mode</button>
+  </div>
   <div class="seg" id="viewSeg" title="Ansicht">
     <button data-view="photos">Bilderbogen</button>
     <button data-view="cover">Deckblatt</button>
@@ -29,6 +33,7 @@
   <div class="seg" id="toolSeg" title="Werkzeug">
     <button data-tool="move" title="Türchen verschieben und skalieren (V)">Anordnen</button>
     <button data-tool="crop" title="Bildausschnitt verschieben, Mausrad zoomt (C)">Ausschnitt</button>
+    <button data-tool="number" hidden title="Zahl im Türchen ziehen; alternativ rechts die Position einstellen">Zahlen verschieben</button>
     <button data-tool="swap" title="Bild auf ein anderes Türchen ziehen (T)">Tauschen</button>
   </div>
 
@@ -52,6 +57,7 @@
 
 <main class="layout">
   <aside class="panel left">
+    <p class="hint simple-help">Bilder hinzufügen → anordnen → Deckblatt gestalten → exportieren. Weitere Einstellungen findest du im Profi Mode.</p>
 
     <details open>
       <summary>Format</summary>
@@ -70,12 +76,12 @@
       <div class="body">
         <div class="row"><label>Modus</label>
           <div class="seg small" data-bind="layout.mode"><button data-v="grid">Raster</button><button data-v="mosaic">Mosaik</button></div></div>
-        <div class="row" data-if="grid"><label>Spalten</label>
+        <div class="row pro-only" data-if="grid"><label>Spalten</label>
           <select data-bind="layout.cols"><option value="auto">Automatisch</option><option>3</option><option>4</option><option>5</option><option>6</option><option>8</option></select></div>
-        <div class="row" data-if="grid"><label>Seitenverhältnis</label>
+        <div class="row pro-only" data-if="grid"><label>Seitenverhältnis</label>
           <select data-bind="layout.ratio"><option value="fill">Fläche füllen</option><option value="1:1">1:1 Quadrat</option><option value="4:3">4:3 quer</option><option value="3:2">3:2 quer</option><option value="3:4">3:4 hoch</option><option value="2:3">2:3 hoch</option></select></div>
-        <div class="row"><label>Rand</label><input type="range" min="5" max="40" step="1" data-bind="layout.margin"><output></output></div>
-        <div class="row"><label>Abstand</label><input type="range" min="0" max="25" step="0.5" data-bind="layout.gap"><output></output></div>
+        <div class="row pro-only"><label>Rand</label><input type="range" min="5" max="40" step="1" data-bind="layout.margin"><output></output></div>
+        <div class="row pro-only"><label>Abstand</label><input type="range" min="0" max="25" step="0.5" data-bind="layout.gap"><output></output></div>
         <div class="btns">
           <button class="accent wide" data-act="autoLayout">Automatisch anordnen</button>
           <button data-act="reroll" data-if="mosaic">Neu würfeln</button>
@@ -90,10 +96,10 @@
       </div>
     </details>
 
-    <details open>
+    <details open class="pro-only">
       <summary>Schnitt &amp; Perforation</summary>
       <div class="body">
-        <div class="row"><label>Scharnier</label>
+        <div class="row pro-only"><label>Scharnier</label>
           <select data-bind="cut.hinge"><option value="left">links</option><option value="right">rechts</option><option value="top">oben</option><option value="bottom">unten</option></select></div>
 
         <h4><i class="dot red"></i>Türchenkante (3 Seiten)</h4>
@@ -118,7 +124,7 @@
       </div>
     </details>
 
-    <details>
+    <details class="pro-only">
       <summary>Türchen-Nummern</summary>
       <div class="body">
         <div class="row"><label>Schrift</label><select data-bind="num.font" class="fontsel"></select></div>
@@ -141,19 +147,27 @@
       </div>
     </details>
 
-    <details>
-      <summary>Deckblatt</summary>
+    <details open>
+      <summary>Deckblatt personalisieren</summary>
       <div class="body">
         <div class="row"><label>Farbe</label><input type="color" data-bind="cover.color"></div>
         <div class="btns">
-          <button data-act="coverImage">Hintergrundbild wählen</button>
+          <button class="accent" data-act="coverImage">Eigenes Hintergrundbild wählen</button>
           <button data-act="coverClear">Entfernen</button>
         </div>
-        <label class="check"><input type="checkbox" data-bind="cover.outlines"><span>Feine Türchen-Umrisse drucken</span></label>
+        <p class="hint" id="coverStatus"></p>
+        <div id="coverCrop" hidden>
+          <div class="row"><label for="coverZoom">Bild-Zoom</label><input id="coverZoom" type="range" min="1" max="4" step="0.05" data-bind="cover.zoom"><output data-unit="×"></output></div>
+          <div class="row"><label for="coverX">Horizontal</label><input id="coverX" type="range" min="0" max="1" step="0.01" data-bind="cover.cx"><output data-unit=""></output></div>
+          <div class="row"><label for="coverY">Vertikal</label><input id="coverY" type="range" min="0" max="1" step="0.01" data-bind="cover.cy"><output data-unit=""></output></div>
+          <button data-act="coverCenter">Ausschnitt zurücksetzen</button>
+        </div>
+        <p class="hint">In der Ansicht „Deckblatt“ kannst du mit „Zahlen verschieben“ jede Zahl innerhalb ihres Türchens platzieren.</p>
+        <label class="check pro-only"><input type="checkbox" data-bind="cover.outlines"><span>Feine Türchen-Umrisse drucken</span></label>
       </div>
     </details>
 
-    <details>
+    <details class="pro-only">
       <summary>Rückseiten-Text</summary>
       <div class="body">
         <div class="row"><label>Schrift</label><select data-bind="back.font" class="fontsel"></select></div>
@@ -195,8 +209,14 @@
     <div class="card" id="inspector">
       <div class="cardhead"><b id="insTitle">Kein Türchen gewählt</b></div>
       <div id="insEmpty" class="hint">Ein Türchen anklicken, um Position, Bildausschnitt und Rückseitentext zu bearbeiten.</div>
+      <div id="numberPosition" hidden>
+        <p class="hint">Zahlenposition im gewählten Türchen</p>
+        <label class="stack">Horizontal<input type="range" min="0" max="100" data-number-axis="nx"></label>
+        <label class="stack">Vertikal<input type="range" min="0" max="100" data-number-axis="ny"></label>
+        <button data-act="numberReset">Zahlenposition zurücksetzen</button>
+      </div>
       <div id="insBody" hidden>
-        <div class="grid2">
+        <div class="grid2 pro-only">
           <label>Nummer<input type="number" min="1" max="24" data-door="n"></label>
           <label>Scharnier<select data-door="hinge"><option value="">Standard</option><option value="left">links</option><option value="right">rechts</option><option value="top">oben</option><option value="bottom">unten</option></select></label>
           <label>X (mm)<input type="number" step="0.5" data-door="x"></label>
@@ -216,7 +236,7 @@
           <textarea rows="4" data-door="text" placeholder="z. B. Gutschein, Gedicht, Erinnerung …"></textarea></label>
         <div class="row"><label title="Schriftgröße für alle Türchen">Schriftgröße</label><input type="range" min="6" max="48" step="1" data-bind="back.size"><output data-unit="pt"></output></div>
         <div class="row"><label title="Faktor nur für dieses Türchen">Nur hier</label><input type="range" min="0.5" max="2.5" step="0.05" data-door="ts"><output data-unit="×"></output></div>
-        <div class="meta" id="insMeta"></div>
+        <div class="meta pro-only" id="insMeta"></div>
       </div>
     </div>
 

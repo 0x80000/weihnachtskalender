@@ -1,6 +1,6 @@
 // Offline-Unterstützung: Dateien werden bevorzugt frisch aus dem Netz geladen
 // und aus dem Zwischenspeicher bedient, wenn keine Verbindung besteht.
-const CACHE = 'adventskalender-v1';
+const CACHE = 'adventskalender-v2';
 const FILES = ['./', 'index.html', 'styles.css', 'app.js', 'exif.js', 'pdf.js', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png'];
 
 self.addEventListener('install', e => {

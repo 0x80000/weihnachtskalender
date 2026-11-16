@@ -41,3 +41,15 @@ Web-App zum Gestalten eines Bilder-Türchen-Adventskalenders: 24 Fotos auf A3 od
 ## Technik
 
 Reines HTML, CSS und JavaScript ohne Abhängigkeiten und ohne Build-Schritt. HEIC-Bilder werden vom Browser nicht unterstützt und müssen vorher als JPG exportiert werden. Die optionale Ortsnamen-Suche sendet ausschließlich GPS-Koordinaten an nominatim.openstreetmap.org und ist standardmäßig ausgeschaltet.
+
+## Simple Mode und Profi Mode
+
+Die App startet im Simple Mode mit den wichtigsten Schritten. Der Profi Mode blendet zusätzlich Detailwerte für Layout, Schnitt, Schrift und Rückseiten ein. Der Modus wird lokal im Browser gemerkt; ein Wechsel verändert keine Projekteinstellungen.
+
+Unter **Deckblatt personalisieren** ein Hintergrundbild wählen und mit Zoom sowie horizontaler/vertikaler Position den Ausschnitt einstellen. Vorschau und Deckblatt-PDF verwenden denselben Ausschnitt.
+
+In der Ansicht **Deckblatt → Zahlen verschieben** ein Türchen ziehen, um nur dessen Zahl innerhalb des Türchens zu verschieben. Alternativ ein Türchen auswählen und rechts die beiden Positionsregler bedienen. **Zahlenposition zurücksetzen** stellt die globale Position wieder her. Individuelle Positionen werden im Projekt gespeichert und im Druck übernommen; der platzsparende Zahlen-Schnittbogen bleibt automatisch angeordnet.
+
+### Browserprüfung
+
+Mit installiertem Node.js, Playwright und Chromium: lokalen Server mit `python3 -m http.server 8010 --bind 127.0.0.1` starten, dann `node tests/browser.cjs http://127.0.0.1:8010` ausführen. Bei anderem Chromium-Pfad `CHROMIUM_PATH` setzen. Die Prüfung testet Modi, Deckblattbild und Ausschnitt, Zahlenposition, Undo/Redo, Projektdateien (auch ältere) und PDF-Erzeugung.
