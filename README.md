@@ -35,6 +35,8 @@ Web-App zum Gestalten eines Bilder-Türchen-Adventskalenders: 24 Fotos auf A3 od
 - Die SVG-Datei in CanvasWorkspace importieren oder per USB-Stick an der Maschine laden.
 - Jeder Perforationsschnitt ist eine einzelne echte Linie; eine Strichlinien-Funktion der Maschine wird nicht benötigt.
 - Der optionale Blattrahmen dient als Ausrichthilfe. Nach dem Import muss er exakt dem Papierformat entsprechen; vor dem Schneiden löschen.
+- **Maßhaltig drucken:** Die PDFs sind im Maßstab 1:1 angelegt und fordern im Druckdialog „keine Skalierung“ an (PrintScaling/None). Trotzdem im Druckdialog „Tatsächliche Größe“ bzw. 100 % prüfen – „An Seite anpassen“ verkleinert den Druck, und die Schnittdatei passt dann nicht mehr.
+- **Kontrollmaßstrecke:** Bilderbogen und Schnittdatei enthalten an derselben Stelle eine 100 mm lange Messstrecke mit Teilstrichen alle 10 mm. Sie liegt im verdeckten Bereich (außerhalb aller Türchen, mindestens 5 mm vom Rand, bevorzugt im Seitenrand). Nach dem Druck mit dem Lineal nachmessen: genau 100 mm. In CanvasWorkspace liegt sie als graue Hilfslinie `kontrollmass` vor (bei gespiegelter Schnittdatei mitgespiegelt); deckt sie sich mit der gedruckten Strecke auf dem Scan, stimmt der Maßstab. Vor dem Schneiden wie den Blattrahmen löschen. Die Strecke lässt sich im Exportbereich abschalten; ist kein Platz frei, zeigt die App einen Hinweis statt sie über ein Türchen zu legen.
 - A4 passt auf die 12″×12″-Matte, A3 benötigt die 12″×24″-Matte.
 - Zuerst an einem Probeblatt testen und die Steglänge anpassen.
 

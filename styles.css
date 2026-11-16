@@ -110,6 +110,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px;
 .btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .btns button { flex: 1 1 auto; font-size: 12px; padding: 5px 9px; }
 .hint { color: var(--muted); font-size: 11.5px; margin: 0; }
+.hint.warnhint { color: var(--accent2); }
+.print-hint { margin-top: 8px; }
 
 .card { border: 1px solid var(--line); border-radius: var(--radius); background: #171b25; padding: 12px; display: flex; flex-direction: column; gap: 9px; }
 .cardhead { display: flex; align-items: center; justify-content: space-between; }
@@ -144,6 +146,7 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 14px;
 #cutSvg path { fill: none; vector-effect: non-scaling-stroke; stroke-width: 1.4px; stroke-linecap: butt; }
 #cutSvg .cd { stroke: var(--cutDoor); } #cutSvg .cf { stroke: var(--cutFold); } #cutSvg .cl { stroke: var(--green); }
 #cutSvg .fr { stroke: #9aa3b5; stroke-width: 1px; }
+#cutSvg .gauge { stroke: #6b7385; }
 #cutSvg .nm { fill: #252a36; fill-rule: evenodd; stroke: var(--cutDoor); stroke-width: 1px; }
 .exports .span2 { grid-column: 1 / 3; }
 
