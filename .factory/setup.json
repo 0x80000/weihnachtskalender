@@ -1,0 +1,5 @@
+{
+  "checks": {
+    "test": "test -s index.html && node --check app.js && node --check pdf.js && node --check exif.js"
+  }
+}
