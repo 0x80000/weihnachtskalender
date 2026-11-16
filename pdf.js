@@ -1,4 +1,4 @@
-// Minimaler PDF-Schreiber: eine Seite in mm, JPEG-Bilder (unverändert eingebettet),
+// Minimaler PDF-Schreiber: eine Seite in mm (Maßstab 1:1, Druckskalierung „keine“), JPEG-Bilder (unverändert eingebettet),
 // verlustfreie RGBA-Bilder (Flate + Transparenzmaske) und einfache Vektorflächen/-linien.
 (function () {
   'use strict';
@@ -23,6 +23,11 @@
     strokePoly(pts, hex, lw) {
       const H = this.H;
       this.ops.push(`${rgb(hex)} RG ${f(lw * K)} w ` + pts.map((p, i) => `${f(p[0] * K)} ${f((H - p[1]) * K)} ${i ? 'l' : 'm'}`).join(' ') + ' h S');
+    }
+    // Offener Linienzug (wird nicht geschlossen).
+    strokeLine(pts, hex, lw) {
+      const H = this.H;
+      this.ops.push(`${rgb(hex)} RG ${f(lw * K)} w 0 J ` + pts.map((p, i) => `${f(p[0] * K)} ${f((H - p[1]) * K)} ${i ? 'l' : 'm'}`).join(' ') + ' S');
     }
     strokeRect(x, y, w, h, hex, lw) {
       this.ops.push(`${rgb(hex)} RG ${f(lw * K)} w ${f(x * K)} ${f((this.H - y - h) * K)} ${f(w * K)} ${f(h * K)} re S`);
@@ -72,7 +77,7 @@
         if (stream) { push(`<<${dict}/Length ${stream.length}>>\nstream\n`); push(stream); push('\nendstream\nendobj\n'); }
         else push(`<<${dict}>>\nendobj\n`);
       };
-      push('%PDF-1.4\n'); push(new Uint8Array([37, 0xE2, 0xE3, 0xCF, 0xD3, 10]));
+      push('%PDF-1.6\n'); push(new Uint8Array([37, 0xE2, 0xE3, 0xCF, 0xD3, 10]));
 
       let next = 5; const res = [];
       for (const im of this.imgs) {
@@ -80,7 +85,8 @@
         if (im.kind === 'rgba') im.maskNum = next++;
         res.push(`/${im.name} ${im.num} 0 R`);
       }
-      obj(1, '/Type/Catalog/Pages 2 0 R');
+      // PrintScaling/None: Druckdialoge stellen „Tatsächliche Größe“ (100 %) statt „An Seite anpassen“ ein.
+      obj(1, '/Type/Catalog/Pages 2 0 R/ViewerPreferences<</PrintScaling/None>>');
       obj(2, '/Type/Pages/Kids[3 0 R]/Count 1');
       obj(3, `/Type/Page/Parent 2 0 R/MediaBox[0 0 ${f(this.W * K)} ${f(this.H * K)}]/Contents 4 0 R/Resources<</XObject<<${res.join(' ')}>>>>`);
       obj(4, '', enc.encode(this.ops.join('\n')));

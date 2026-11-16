@@ -262,6 +262,9 @@
         <button data-act="expLabels"><b>6 · Textkärtchen</b><small>SVG, Schnitt der Texte</small></button>
       </div>
       <button class="primary wide" data-act="expAll">Alle Dateien exportieren</button>
+      <label class="check"><input type="checkbox" data-bind="cut.gauge"><span>Kontrollmaßstrecke 100 mm (Bilderbogen + Schnittdatei)</span></label>
+      <p class="hint" id="gaugeInfo"></p>
+      <p class="hint print-hint" id="printHint"><b>Maßhaltig drucken:</b> Skalierung „Tatsächliche Größe“ bzw. 100 % wählen, nicht „An Seite anpassen“. Die gedruckte Kontrollmaßstrecke mit dem Lineal prüfen – sie muss genau 100 mm lang sein. In CanvasWorkspace muss der Blattrahmen dem Papierformat entsprechen und die Strecke deckungsgleich auf dem Scan liegen; Strecke und Rahmen vor dem Schneiden löschen.</p>
     </div>
   </aside>
 </main>
@@ -283,7 +286,9 @@
   <ul>
     <li>Die SVG-Datei in <b>CanvasWorkspace</b> importieren oder per USB-Stick direkt an der Maschine laden (SDX-Serie, CM-Serie mit aktueller Firmware).</li>
     <li>Jeder Perforationsschnitt ist eine echte, einzelne Linie – die Maschine braucht keine Strichlinien-Funktion.</li>
+    <li>PDFs mit „Tatsächliche Größe“ bzw. 100 % drucken, nicht „An Seite anpassen“. Die Kontrollmaßstrecke auf dem Bilderbogen mit dem Lineal prüfen: genau 100 mm.</li>
     <li>Nach dem Import die Größe prüfen: Der Blattrahmen muss exakt dem Papierformat entsprechen. Blatt auf der Matte einscannen, Rahmen deckungsgleich ausrichten, dann den Rahmen vor dem Schneiden löschen.</li>
+    <li>Die Schnittdatei enthält die Kontrollmaßstrecke als graue Hilfslinie „kontrollmass“ an derselben Stelle wie auf dem Bilderbogen. Auf dem Scan deckungsgleich? Dann stimmt der Maßstab. Vor dem Schneiden wie den Blattrahmen löschen.</li>
     <li>A4 passt auf die 12″×12″-Matte, für A3 wird die 12″×24″-Matte benötigt.</li>
     <li>Erst an einem Probeblatt testen: Reißt das Türchen schwer auf, Steglänge verkleinern; fällt es heraus, vergrößern.</li>
   </ul>
